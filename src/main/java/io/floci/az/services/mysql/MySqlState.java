@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -184,7 +185,7 @@ public class MySqlState {
                 key(entry.serverName()), data,
                 Map.of("serverName", entry.serverName()),
                 entry.createdAt(),
-                java.util.UUID.randomUUID().toString()));
+                UUID.randomUUID().toString()));
         } catch (Exception e) {
             LOG.warnf(e, "Failed to persist MySQL server entry: %s", entry.serverName());
         }

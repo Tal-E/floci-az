@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.az.config.EmulatorConfig;
 import io.floci.az.core.AzureRequest;
 import io.floci.az.core.AzureServiceHandler;
-import io.floci.az.core.ServiceRoutes;
 import io.floci.az.core.Resettable;
+import io.floci.az.core.ServiceRoutes;
 import io.floci.az.core.arm.ArmErrors;
 import io.floci.az.core.arm.ArmPaths;
 import io.floci.az.core.arm.ArmResources;
@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static io.floci.az.config.EmulatorConfig.SqlDataPlaneProvider.EXTERNAL;
 import static io.floci.az.config.EmulatorConfig.SqlDataPlaneProvider.NONE;
@@ -333,10 +334,10 @@ public class SqlHandler implements AzureServiceHandler, Resettable, ResourceInde
             Map<String, String> tags, String provisioningState) {
         Map<String, SqlState.SqlDatabaseEntry> databases = current
             .map(SqlState.SqlServerEntry::databases)
-            .orElseGet(java.util.concurrent.ConcurrentHashMap::new);
+            .orElseGet(ConcurrentHashMap::new);
         Map<String, SqlState.SqlFirewallRule> firewallRules = current
             .map(SqlState.SqlServerEntry::firewallRules)
-            .orElseGet(java.util.concurrent.ConcurrentHashMap::new);
+            .orElseGet(ConcurrentHashMap::new);
         Instant createdAt = current.map(SqlState.SqlServerEntry::createdAt).orElseGet(Instant::now);
         String containerId = current.map(SqlState.SqlServerEntry::containerId).orElse(null);
         int hostPort = current.map(SqlState.SqlServerEntry::hostPort).orElse(0);

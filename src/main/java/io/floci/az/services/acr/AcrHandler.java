@@ -7,17 +7,17 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.floci.az.config.EmulatorConfig;
 import io.floci.az.core.AzureRequest;
 import io.floci.az.core.AzureServiceHandler;
-import io.floci.az.core.ServiceRoutes;
 import io.floci.az.core.RequestUrls;
 import io.floci.az.core.Resettable;
+import io.floci.az.core.ServiceRoutes;
 import io.floci.az.core.StoredObject;
-import io.floci.az.core.storage.StorageBackend;
-import io.floci.az.core.storage.StorageFactory;
-import io.floci.az.services.acr.AcrModels.Registry;
 import io.floci.az.core.arm.ArmErrors;
 import io.floci.az.core.arm.ArmPaths;
 import io.floci.az.core.arm.ArmResources;
 import io.floci.az.core.arm.ResourceIndexContributor;
+import io.floci.az.core.storage.StorageBackend;
+import io.floci.az.core.storage.StorageFactory;
+import io.floci.az.services.acr.AcrModels.Registry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -25,6 +25,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
+import java.io.InputStream;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
@@ -655,7 +656,7 @@ public class AcrHandler implements AzureServiceHandler, Resettable, ResourceInde
         return map;
     }
 
-    private JsonNode readBody(java.io.InputStream stream) {
+    private JsonNode readBody(InputStream stream) {
         try {
             if (stream == null || stream.available() == 0) { return MAPPER.createObjectNode(); }
             return MAPPER.readTree(stream);
