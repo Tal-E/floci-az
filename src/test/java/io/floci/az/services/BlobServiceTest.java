@@ -1799,6 +1799,36 @@ public class BlobServiceTest {
     }
 
     @Test
+    void dataLakeAccessControlRejectsFlatNamespaceAccount() {
+        String account = "flataccount";
+        given().put("/{account}/{container}?restype=container", account, CONTAINER);
+
+        given()
+            .header("Host", account + ".dfs.core.windows.net")
+            .queryParam("action", "getAccessControl")
+            .queryParam("upn", false)
+            .when().head("/{container}", CONTAINER)
+            .then()
+            .statusCode(400)
+            .header("x-ms-error-code", "HierarchicalNamespaceNotEnabled");
+    }
+
+    @Test
+    void dataLakeSetAccessControlRejectsFlatNamespaceAccount() {
+        String account = "flataccount";
+        given().put("/{account}/{container}?restype=container", account, CONTAINER);
+
+        given()
+            .header("Host", account + ".dfs.core.windows.net")
+            .header("x-ms-permissions", "0750")
+            .queryParam("action", "setAccessControl")
+            .when().patch("/{container}", CONTAINER)
+            .then()
+            .statusCode(400)
+            .header("x-ms-error-code", "HierarchicalNamespaceNotEnabled");
+    }
+
+    @Test
     void dataLakeConditionalCreateSupportsHadoopDefaultOverwriteProtocol() {
         given().put("/{account}/{container}?restype=container", ACCOUNT, CONTAINER);
 
@@ -2012,6 +2042,21 @@ public class BlobServiceTest {
             .queryParam("action", "checkAccess").queryParam("fsAction", "r--")
             .when().head("/{container}/missing", CONTAINER)
             .then().statusCode(404).header("x-ms-error-code", "PathNotFound");
+    }
+
+    @Test
+    void dataLakeCheckAccessRejectsFlatNamespaceAccount() {
+        String account = "flataccount";
+        given().put("/{account}/{container}?restype=container", account, CONTAINER);
+
+        given()
+            .header("Host", account + ".dfs.core.windows.net")
+            .queryParam("action", "checkAccess")
+            .queryParam("fsAction", "r--")
+            .when().head("/{container}", CONTAINER)
+            .then()
+            .statusCode(400)
+            .header("x-ms-error-code", "InvalidQueryParameterValue");
     }
 
     @Test
