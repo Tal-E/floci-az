@@ -226,17 +226,35 @@ public class AciContainerGroupManager {
     /**
      * Pre-allocates a host port for each published group port, preferring the container port
      * itself so `localhost:<port>` works natively, falling back to the configured range.
+     *
+     * <p>In published endpoint mode each port is published only on its own number. Every group is
+     * reached at the Docker daemon's host, and clients pair that address with the group's
+     * advertised container ports, so a port published on any other number would be unreachable
+     * (or reach another group holding the number). Nothing is probed locally: floci-az's own host
+     * says nothing about a remote daemon's ports. A port floci-az has already reserved (for
+     * another group or a sidecar) fails the start at once; one taken on the daemon by anything
+     * else fails the container's bind.
      */
-    private Map<Integer, Integer> allocatePublishedPorts(ContainerGroup group, List<Integer> allocated) {
+    Map<Integer, Integer> allocatePublishedPorts(ContainerGroup group, List<Integer> allocated) {
         Map<Integer, Integer> bindings = new LinkedHashMap<>();
         for (Map<String, Object> port : listOfMaps(ipAddress(group).get("ports"))) {
             int containerPort = ((Number) port.get("port")).intValue();
             int hostPort;
-            try {
-                hostPort = portAllocator.allocate(containerPort, containerPort);
-            } catch (Exception e) {
-                hostPort = portAllocator.allocate(config.services().aci().basePort(),
-                        config.services().aci().maxPort());
+            if (lifecycleManager.publishedEndpoints()) {
+                if (!portAllocator.reserveUnprobed(containerPort)) {
+                    throw new IllegalStateException("Container group " + group.getName() + ": port "
+                            + containerPort + " is already reserved by floci-az (by another container "
+                            + "group or service). In published endpoint mode this group needs that port "
+                            + "on the Docker daemon host.");
+                }
+                hostPort = containerPort;
+            } else {
+                try {
+                    hostPort = portAllocator.allocate(containerPort, containerPort);
+                } catch (Exception e) {
+                    hostPort = portAllocator.allocate(config.services().aci().basePort(),
+                            config.services().aci().maxPort());
+                }
             }
             bindings.put(containerPort, hostPort);
             allocated.add(hostPort);
@@ -302,15 +320,23 @@ public class AciContainerGroupManager {
         return containerId == null ? "" : lifecycleManager.logs(containerId, tail, timestamps);
     }
 
-    /** The IP to report as {@code ipAddress.ip}: primary's network IP in Docker, 127.0.0.1 natively. */
+    /**
+     * The IP to report as {@code ipAddress.ip}: primary's network IP in Docker, 127.0.0.1 natively.
+     * Clients combine it with the group's container ports, so in published endpoint mode it's the
+     * Docker daemon's host only when every advertised port is published on the same number;
+     * otherwise the auto address, which pairs with the container ports.
+     */
     public String groupIp(ContainerGroup group) {
+        if (lifecycleManager.publishedEndpoints() && publishedOnAdvertisedPorts(group)) {
+            return lifecycleManager.daemonAddress();
+        }
         if (containerDetector.isRunningInContainer()) {
             String primaryId = primaryContainerId(group);
             List<Map<String, Object>> ports = listOfMaps(ipAddress(group).get("ports"));
             if (primaryId != null && !ports.isEmpty()) {
                 int firstPort = ((Number) ports.get(0).get("port")).intValue();
                 try {
-                    return lifecycleManager.resolveEndpoint(primaryId, firstPort).host();
+                    return lifecycleManager.resolveAutoEndpoint(primaryId, firstPort).host();
                 } catch (Exception e) {
                     LOG.debugv("Could not resolve group IP for {0}: {1}", group.getName(), e.getMessage());
                 }
@@ -403,6 +429,21 @@ public class AciContainerGroupManager {
 
     private static String containerId(ContainerGroup group, String containerName) {
         return group.getContainerIds() == null ? null : group.getContainerIds().get(containerName);
+    }
+
+    /** True when every advertised port is published on the same host port number. */
+    static boolean publishedOnAdvertisedPorts(ContainerGroup group) {
+        List<Map<String, Object>> ports = listOfMaps(ipAddress(group).get("ports"));
+        List<Integer> hostPorts = group.getAllocatedHostPorts();
+        if (ports.isEmpty() || hostPorts == null || hostPorts.size() != ports.size()) {
+            return false;
+        }
+        for (int i = 0; i < ports.size(); i++) {
+            if (((Number) ports.get(i).get("port")).intValue() != hostPorts.get(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String primaryContainerId(ContainerGroup group) {

@@ -30,6 +30,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.URI;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -61,6 +62,9 @@ public class ContainerLifecycleManager {
 
     /** Volumes whose shared-ownership root has already been initialised this process (run-once guard). */
     private final ConcurrentHashMap<String, Boolean> initializedSharedVolumes = new ConcurrentHashMap<>();
+
+    /** The Docker daemon's hostname for published-mode endpoints; resolved once, on first use. */
+    private volatile String daemonHost;
 
     @Inject
     public ContainerLifecycleManager(DockerClient dockerClient,
@@ -911,6 +915,29 @@ public class ContainerLifecycleManager {
 
     private EndpointInfo resolveEndpoint(InspectContainerResponse inspect, int containerPort,
                                          String preferredNetwork) {
+        if (publishedEndpoints()) {
+            OptionalInt hostPort = publishedHostPort(inspect, containerPort);
+            if (hostPort.isPresent()) {
+                return new EndpointInfo(daemonHost(), hostPort.getAsInt());
+            }
+            LOG.warnv("endpoint-mode is published, but container port {0} has no published "
+                    + "binding; addressing it as in auto mode", String.valueOf(containerPort));
+        }
+        return resolveAutoEndpoint(inspect, containerPort, preferredNetwork);
+    }
+
+    /**
+     * The endpoint {@code auto} mode gives, whatever the configured mode: for callers whose
+     * address must pair with a container port rather than a published one (e.g. an ACI group's
+     * reported IP, which clients combine with the group's container ports).
+     */
+    public EndpointInfo resolveAutoEndpoint(String containerId, int containerPort) {
+        InspectContainerResponse inspect = dockerClient.inspectContainerCmd(containerId).exec();
+        return resolveAutoEndpoint(inspect, containerPort, null);
+    }
+
+    private EndpointInfo resolveAutoEndpoint(InspectContainerResponse inspect, int containerPort,
+                                             String preferredNetwork) {
         if (!containerDetector.isRunningInContainer()) {
             // Native mode: use localhost and the bound host port
             Map<ExposedPort, Ports.Binding[]> bindings = inspect.getNetworkSettings().getPorts().getBindings();
@@ -928,6 +955,75 @@ public class ContainerLifecycleManager {
             // is used instead of withNetworkMode() during creation.
             String containerIp = resolveContainerIp(inspect, preferredNetwork);
             return new EndpointInfo(containerIp, containerPort);
+        }
+    }
+
+    /**
+     * True when sidecars are addressed at the Docker daemon's host and their published ports
+     * ({@code floci-az.docker.endpoint-mode=published}): for floci-az's own connections and for
+     * the host and port reported to clients.
+     */
+    public boolean publishedEndpoints() {
+        return config.docker().endpointMode() == EmulatorConfig.DockerEndpointMode.PUBLISHED;
+    }
+
+    /**
+     * The host sidecars are reached at in published mode: the host of a {@code tcp://} Docker
+     * daemon, or {@code localhost} for a local socket. Uses the same resolution as the Docker
+     * client itself, so the two always agree.
+     */
+    public String daemonHost() {
+        String host = daemonHost;
+        if (host == null) {
+            host = daemonHostname(DockerClientProducer.resolveEffectiveDockerHost(
+                    config.docker().dockerHost(), System.getenv("DOCKER_HOST")));
+            daemonHost = host;
+        }
+        return host;
+    }
+
+    /**
+     * The Docker daemon's host as an address, for fields that hold one (an ACI group's
+     * {@code ipAddress.ip}, the host a service reports to clients, a certificate SAN): the same as
+     * {@link #daemonHost()} but with an IPv6 literal's URL brackets removed.
+     */
+    public String daemonAddress() {
+        return HostLiterals.bare(daemonHost());
+    }
+
+    static String daemonHostname(String dockerHost) {
+        if (dockerHost != null && !dockerHost.isBlank()) {
+            try {
+                URI uri = URI.create(dockerHost);
+                String scheme = uri.getScheme();
+                String host = uri.getHost();
+                if (scheme != null && host != null && !host.isBlank()
+                        && (scheme.equalsIgnoreCase("tcp") || scheme.equalsIgnoreCase("http")
+                            || scheme.equalsIgnoreCase("https"))) {
+                    // An IPv6 literal keeps its brackets: callers build URLs from this host
+                    // (AKS, ACR), and InetAddress accepts the bracketed form for sockets too.
+                    return host;
+                }
+            } catch (IllegalArgumentException e) {
+                LOG.debugv("Could not parse Docker host {0}: {1}", dockerHost, e.getMessage());
+            }
+        }
+        return "localhost";
+    }
+
+    private static OptionalInt publishedHostPort(InspectContainerResponse inspect, int containerPort) {
+        if (inspect.getNetworkSettings() == null || inspect.getNetworkSettings().getPorts() == null) {
+            return OptionalInt.empty();
+        }
+        Map<ExposedPort, Ports.Binding[]> bindings = inspect.getNetworkSettings().getPorts().getBindings();
+        Ports.Binding[] binding = bindings == null ? null : bindings.get(ExposedPort.tcp(containerPort));
+        if (binding == null || binding.length == 0 || binding[0].getHostPortSpec() == null) {
+            return OptionalInt.empty();
+        }
+        try {
+            return OptionalInt.of(Integer.parseInt(binding[0].getHostPortSpec()));
+        } catch (NumberFormatException e) {
+            return OptionalInt.empty();
         }
     }
 

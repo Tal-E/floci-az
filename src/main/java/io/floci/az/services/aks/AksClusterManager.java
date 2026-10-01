@@ -21,6 +21,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -77,9 +78,7 @@ public class AksClusterManager {
         lifecycleManager.ensureVolume(volumeName);
         ContainerSpec spec = containerBuilder.newContainer(image)
                 .withName(containerName)
-                .withCmd(List.of("server",
-                        "--disable=traefik",
-                        "--tls-san=localhost"))
+                .withCmd(k3sServerArgs())
                 .withEnv("K3S_KUBECONFIG_MODE", "644")
                 .withPortBinding(K3S_API_SERVER_PORT, hostPort)
                 .withNamedVolume(volumeName, "/var/lib/rancher/k3s")
@@ -105,7 +104,10 @@ public class AksClusterManager {
         }
         cluster.setContainerId(info.containerId());
 
-        if (containerDetector.isRunningInContainer()) {
+        if (lifecycleManager.publishedEndpoints()) {
+            cluster.setEndpoint("https://" + lifecycleManager.daemonHost() + ":" + hostPort);
+            cluster.setInternalEndpoint(cluster.getEndpoint());
+        } else if (containerDetector.isRunningInContainer()) {
             cluster.setEndpoint("https://" + containerName + ":" + K3S_API_SERVER_PORT);
             ContainerLifecycleManager.EndpointInfo ep = info.getEndpoint(K3S_API_SERVER_PORT);
             cluster.setInternalEndpoint(ep != null
@@ -251,5 +253,18 @@ public class AksClusterManager {
         } catch (Exception e) {
             LOG.debugv("Could not disable SSL verification: {0}", e.getMessage());
         }
+    }
+
+    /**
+     * k3s server arguments. The API certificate must be valid for every host the cluster is
+     * addressed by: {@code localhost} always, plus the Docker daemon's host in published mode.
+     */
+    List<String> k3sServerArgs() {
+        List<String> args = new ArrayList<>(List.of("server", "--disable=traefik", "--tls-san=localhost"));
+        if (lifecycleManager.publishedEndpoints() && !"localhost".equals(lifecycleManager.daemonAddress())) {
+            // a SAN takes the bare address, not the bracketed URL form of an IPv6 literal
+            args.add("--tls-san=" + lifecycleManager.daemonAddress());
+        }
+        return args;
     }
 }

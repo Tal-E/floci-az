@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.net.ServerSocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,5 +83,15 @@ class PortAllocatorTest {
         int fromRange = allocator.allocate(base, base + 20);
         assertNotEquals(base, fromRange, "range allocation must not reissue a claimed port");
         assertTrue(fromRange > base && fromRange <= base + 20);
+    }
+
+    @Test
+    @DisplayName("reserveUnprobed reserves without probing and reports an existing reservation")
+    void reserveUnprobed() {
+        PortAllocator allocator = new PortAllocator();
+        assertTrue(allocator.reserveUnprobed(65001));
+        assertFalse(allocator.reserveUnprobed(65001));
+        allocator.release(65001);
+        assertTrue(allocator.reserveUnprobed(65001));
     }
 }

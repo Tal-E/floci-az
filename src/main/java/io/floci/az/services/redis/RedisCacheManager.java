@@ -89,7 +89,12 @@ public class RedisCacheManager {
         cache.setContainerId(info.containerId());
 
         ContainerLifecycleManager.EndpointInfo ep = info.getEndpoint(REDIS_PORT);
-        if (containerDetector.isRunningInContainer()) {
+        if (lifecycleManager.publishedEndpoints()) {
+            cache.setHostName(lifecycleManager.daemonAddress());
+            cache.setPort(hostPort);
+            cache.setInternalEndpoint(ep != null ? ep.host() + ":" + ep.port()
+                    : lifecycleManager.daemonHost() + ":" + hostPort);
+        } else if (containerDetector.isRunningInContainer()) {
             cache.setHostName(containerName);
             cache.setPort(REDIS_PORT);
             cache.setInternalEndpoint(containerName + ":" + REDIS_PORT);
