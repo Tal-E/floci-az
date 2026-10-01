@@ -53,6 +53,36 @@ public final class AmqpEntityAddress {
       return isEventHubPath(afterHost) ? afterHost : path;
    }
 
+   /**
+    * Strips the scheme and host from an address sent to a Service Bus broker, leaving the entity
+    * path: {@code queue}, {@code queue/$DeadLetterQueue}, {@code topic/Subscriptions/sub} or
+    * {@code topic/Subscriptions/sub/$DeadLetterQueue}.
+    *
+    * <p>The Python and Rust Service Bus SDKs name every entity under {@code {scheme}://{host}/}.
+    * A bare queue is event-hub-shaped, so {@link #toEntityPath} already reduces it, but it leaves
+    * the multi-segment paths whole, and whole they match no address, so every subscription and
+    * dead-letter receive fails with {@code AMQ119010}. {@link #toEntityPath} has to leave them
+    * alone on an Event Hubs broker, where a host-carrying path names the namespace family. A
+    * Service Bus broker declares no host-carrying addresses, so there the host never carries
+    * information and every path is reduced. Callers pick between the two by broker; see
+    * {@link ServiceBusSessionSupport#sourceEntityPath}.
+    */
+   public static String toServiceBusEntityPath(String address) {
+      if (address == null) {
+         return null;
+      }
+      String path = stripLeadingSlashes(address);
+      int schemeEnd = path.indexOf("://");
+      if (schemeEnd < 0) {
+         return path;
+      }
+      int hostEnd = path.indexOf('/', schemeEnd + 3);
+      if (hostEnd < 0 || hostEnd == path.length() - 1) {
+         return path;
+      }
+      return stripLeadingSlashes(path.substring(hostEnd + 1));
+   }
+
    private static String stripLeadingSlashes(String value) {
       int i = 0;
       while (i < value.length() && value.charAt(i) == '/') {
