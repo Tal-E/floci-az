@@ -45,6 +45,9 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
             new StoredObject("", new byte[0], Map.of(), Instant.EPOCH, "");
     private static final long DEFAULT_MESSAGE_TTL_SECONDS = 604800;
     private static final long DEFAULT_VISIBILITY_TIMEOUT_SECONDS = 30;
+    private static final long MAX_VISIBILITY_TIMEOUT_SECONDS = 604800;
+    // Below this, a stored _visibleAt predates epoch-millis storage and is in epoch seconds.
+    private static final long LEGACY_EPOCH_SECONDS_CEILING = 100_000_000_000L;
     private static final String NEVER_EXPIRES = "Fri, 31 Dec 9999 23:59:59 GMT";
 
     private final StorageBackend<String, StoredObject> store;
@@ -282,9 +285,9 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
                         "visibilitytimeout and messagettl must be valid integers.")
                         .toXmlResponse(Response.Status.BAD_REQUEST.getStatusCode());
             }
-            if (visibilityTimeoutSecs < 0) {
+            if (visibilityTimeoutSecs < 0 || visibilityTimeoutSecs > MAX_VISIBILITY_TIMEOUT_SECONDS) {
                 return new AzureErrorResponse("OutOfRangeQueryParameterValue",
-                        "The visibilitytimeout parameter must be greater than or equal to 0.")
+                        "The visibilitytimeout parameter must be between 0 and 604800.")
                         .toXmlResponse(Response.Status.BAD_REQUEST.getStatusCode());
             }
 
@@ -310,7 +313,7 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
             metadata.put("MessageText", msgReq.MessageText());
             metadata.put("PopReceipt", popReceipt);
             metadata.put("DequeueCount", "0");
-            metadata.put("_visibleAt", String.valueOf(visibleAt.getEpochSecond()));
+            metadata.put("_visibleAt", String.valueOf(visibleAt.toEpochMilli()));
 
             String key = System.currentTimeMillis() + "-" + messageId;
             store.put(objKey(request.accountName(), queueName, key),
@@ -352,9 +355,9 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
         long visibilityTimeoutSecs;
         try {
             visibilityTimeoutSecs = Long.parseLong(request.queryParams().getOrDefault("visibilitytimeout", String.valueOf(DEFAULT_VISIBILITY_TIMEOUT_SECONDS)));
-            if (visibilityTimeoutSecs < 1) {
+            if (visibilityTimeoutSecs < 1 || visibilityTimeoutSecs > MAX_VISIBILITY_TIMEOUT_SECONDS) {
                 return new AzureErrorResponse("OutOfRangeQueryParameterValue",
-                        "The visibilitytimeout parameter must be greater than 0.")
+                        "The visibilitytimeout parameter must be between 1 and 604800.")
                         .toXmlResponse(Response.Status.BAD_REQUEST.getStatusCode());
             }
         } catch (NumberFormatException e) {
@@ -373,7 +376,7 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
             Instant hiddenUntil = now.plusSeconds(visibilityTimeoutSecs);
             for (StoredObject so : visible) {
                 Map<String, String> meta = new HashMap<>(so.metadata());
-                meta.put("_visibleAt", String.valueOf(hiddenUntil.getEpochSecond()));
+                meta.put("_visibleAt", String.valueOf(hiddenUntil.toEpochMilli()));
                 int dequeueCount = Integer.parseInt(meta.getOrDefault("DequeueCount", "0")) + 1;
                 meta.put("DequeueCount", String.valueOf(dequeueCount));
                 meta.put("PopReceipt", UUID.randomUUID().toString());
@@ -415,7 +418,11 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
         String visibleAt = so.metadata().get("_visibleAt");
         if (visibleAt == null) return true;
         try {
-            return Instant.ofEpochSecond(Long.parseLong(visibleAt)).isBefore(now);
+            long stored = Long.parseLong(visibleAt);
+            Instant deadline = stored < LEGACY_EPOCH_SECONDS_CEILING
+                    ? Instant.ofEpochSecond(stored)
+                    : Instant.ofEpochMilli(stored);
+            return deadline.isBefore(now);
         } catch (NumberFormatException e) {
             return true;
         }
@@ -461,9 +468,9 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
         long visibilityTimeoutSecs;
         try {
             visibilityTimeoutSecs = Long.parseLong(request.queryParams().getOrDefault("visibilitytimeout", String.valueOf(DEFAULT_VISIBILITY_TIMEOUT_SECONDS)));
-            if (visibilityTimeoutSecs < 0) {
+            if (visibilityTimeoutSecs < 0 || visibilityTimeoutSecs > MAX_VISIBILITY_TIMEOUT_SECONDS) {
                 return new AzureErrorResponse("OutOfRangeQueryParameterValue",
-                        "The visibilitytimeout parameter must be greater than or equal to 0.")
+                        "The visibilitytimeout parameter must be between 0 and 604800.")
                         .toXmlResponse(Response.Status.BAD_REQUEST.getStatusCode());
             }
         } catch (NumberFormatException e) {
@@ -492,7 +499,7 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
             Map<String, String> meta = new HashMap<>(existing.get().metadata());
             meta.put("MessageText", msgReq.MessageText());
             meta.put("PopReceipt", newPopReceipt);
-            meta.put("_visibleAt", String.valueOf(visibleAt.getEpochSecond()));
+            meta.put("_visibleAt", String.valueOf(visibleAt.toEpochMilli()));
 
             store.put(objKey(request.accountName(), queueName, existing.get().key()),
                     new StoredObject(existing.get().key(), msgReq.MessageText().getBytes(), meta,
