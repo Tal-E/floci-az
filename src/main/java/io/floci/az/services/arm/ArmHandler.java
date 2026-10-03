@@ -587,6 +587,11 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
     }
 
     private synchronized Response createOrUpdateStorageAccount(AzureRequest req, String sub, String rg, String account) {
+        if (!account.matches("[a-z0-9]{3,24}")) {
+            return ArmErrors.error(400, "AccountNameInvalid", account
+                    + " is not a valid storage account name. Storage account name must be between 3 and 24 "
+                    + "characters in length and use numbers and lower-case letters only.");
+        }
         Optional<Map<String, Object>> owner = ownedElsewhere(storageAccounts, sub, rg, account);
         if (owner.isPresent()) {
             return sub.equalsIgnoreCase((String) owner.get().get("_sub"))
@@ -936,6 +941,13 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
      */
     private Response checkNameAvailability(AzureRequest req, String path) {
         String name = bodyString(parseBody(req), "name", "");
+        if (path.contains("/Microsoft.Storage/") && !name.matches("[a-z0-9]{3,24}")) {
+            return Response.ok(Map.of(
+                    "nameAvailable", false,
+                    "reason", "AccountNameInvalid",
+                    "message", name + " is not a valid storage account name. Storage account name must be between "
+                            + "3 and 24 characters in length and use numbers and lower-case letters only.")).build();
+        }
         Map<String, Map<String, Object>> store = path.contains("/Microsoft.Storage/") ? storageAccounts
                 : path.contains("/Microsoft.KeyVault/") ? keyVaults
                 : null;
