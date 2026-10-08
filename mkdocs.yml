@@ -63,6 +63,7 @@ nav:
     - Terraform / OpenTofu: terraform.md
   - Configuration:
     - Docker Compose: configuration/docker-compose.md
+    - Docker Images: configuration/docker-images.md
     - Ports Reference: configuration/ports.md
     - Storage Modes: configuration/storage.md
     - Advanced:

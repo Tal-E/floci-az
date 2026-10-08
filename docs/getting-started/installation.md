@@ -6,13 +6,16 @@ Floci-AZ is distributed as a multi-arch Docker image (`linux/amd64` and `linux/a
 
 ### Image Tags
 
-| Tag | Description |
-|---|---|
-| `latest` | Native binary: **<100ms** startup **(recommended)** |
-| `latest-jvm` | JVM image: larger, no GraalVM required |
-| `x.y.z` | Pinned native release |
-| `x.y.z-jvm` | Pinned JVM release |
-| `edge` | Weekly build from `main` |
+Each tag combines a **variant** (what's inside) and a **channel** (how stable).
+
+|  | Standard | Compat (+ Azure CLI + azfloci) |
+|---|---|---|
+| **Release (latest)** | `latest` ✅ | `latest-compat` |
+| **Release (pinned)** | `x.y.z` | `x.y.z-compat` |
+| **Nightly (floating)** | `nightly` | `nightly-compat` |
+| **Nightly (dated)** | `nightly-mmddyyyy` | `nightly-mmddyyyy-compat` |
+
+For the full breakdown see [Docker Images](../configuration/docker-images.md).
 
 ### Quick Run
 
@@ -26,6 +29,33 @@ docker run -d --name floci-az \
 
 The Docker socket mount is required for Azure Functions. The entrypoint automatically
 handles Docker socket group permissions on both Linux and macOS/Windows hosts.
+
+### Choosing a tag
+
+```yaml title="docker-compose.yml"
+# Standard release: recommended for most use cases
+services:
+  floci-az:
+    image: floci/floci-az:latest
+    ports:
+      - "4577:4577"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Use the compat image if your workflow requires the Azure CLI or `azfloci` available inside the container:
+
+```yaml title="docker-compose.yml"
+services:
+  floci-az:
+    image: floci/floci-az:latest-compat
+    ports:
+      - "4577:4577"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Standard and compat have identical startup time and memory footprint.
 
 ---
 

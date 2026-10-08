@@ -19,6 +19,20 @@ docker compose up -d
 
 All services are immediately available at `http://localhost:4577`.
 
+!!! tip "Need the Azure CLI inside the container?"
+    Use `latest-compat` if you need the Azure CLI and `azfloci` inside the container:
+
+    ```yaml title="docker-compose.yml"
+    services:
+      floci-az:
+        image: floci/floci-az:latest-compat
+        ports:
+          - "4577:4577"
+        volumes:
+          - ./data:/app/data
+          - /var/run/docker.sock:/var/run/docker.sock  # required for Azure Functions
+    ```
+
 !!! tip "Don't use Azure Functions?"
     Skip the Docker socket mount and set `FLOCI_AZ_SERVICES_FUNCTIONS_ENABLED=false` for a simpler setup.
 

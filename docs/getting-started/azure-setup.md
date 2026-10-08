@@ -4,6 +4,8 @@
 
 The `azfloci` tool is a companion Python CLI that acts as a transparent proxy for the official Azure CLI (`az`).
 
+The `floci/floci-az:latest-compat` image ships with the Azure CLI and `azfloci` already installed at `/usr/local/bin/azfloci`, so inside that container you can call `azfloci` directly. See [Docker Images](../configuration/docker-images.md).
+
 ### Setup
 
 ```bash

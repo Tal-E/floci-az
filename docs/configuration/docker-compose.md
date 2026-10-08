@@ -150,6 +150,20 @@ services:
 Once the sidecars start, their ports are available on the host: `localhost:27017` (MongoDB),
 `localhost:5432` (PostgreSQL), `localhost:5672` (AMQP / Artemis).
 
+### With the Azure CLI inside the container
+
+Use the `latest-compat` image when your scripts need Azure tooling inside the container. It includes the Azure CLI and `azfloci`. Call `azfloci` to target the local emulator without passing a connection string; plain `az` still needs explicit connection settings. See [Docker Images](docker-images.md) for what the compat image contains.
+
+```yaml
+services:
+  floci-az:
+    image: floci/floci-az:latest-compat
+    ports:
+      - "4577:4577"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
 ### Multi-container (your app + floci-az)
 
 When your application also runs in Docker, use the service name as the hostname:

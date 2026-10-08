@@ -692,19 +692,20 @@ The account name and key are the same. Floci AZ consolidates all services onto p
 
 All images are native (multi-arch `linux/amd64` + `linux/arm64`).
 
-| Channel | Tag |
-|---|---|
-| Release, floating | `latest` |
-| Release, pinned | `x.y.z` |
-| Nightly, floating | `nightly` |
-| Nightly, dated | `nightly-mmddyyyy` |
+| Channel | Standard | Compat with Azure CLI and azfloci |
+|---|---|---|
+| Release, floating | `latest` | `latest-compat` |
+| Release, pinned | `x.y.z` | `x.y.z-compat` |
+| Nightly, floating | `nightly` | `nightly-compat` |
+| Nightly, dated | `nightly-mmddyyyy` | `nightly-mmddyyyy-compat` |
 
 Use `latest` for stable releases, a pinned version for reproducible builds, and `nightly` to track `main`.
 
 ```yaml
-image: floci/floci-az:latest      # recommended
-image: floci/floci-az:x.y.z       # pinned release
-image: floci/floci-az:nightly     # track main
+image: floci/floci-az:latest         # recommended
+image: floci/floci-az:latest-compat  # includes Azure CLI and azfloci
+image: floci/floci-az:x.y.z          # pinned release
+image: floci/floci-az:nightly        # track main
 ```
 
 ### Release train
