@@ -11,6 +11,7 @@ import com.azure.data.tables.models.TableServiceException;
 import com.azure.data.tables.models.TableServiceProperties;
 import com.azure.data.tables.models.TableTransactionAction;
 import com.azure.data.tables.models.TableTransactionActionType;
+import com.azure.data.tables.models.TableTransactionFailedException;
 import org.junit.jupiter.api.*;
 
 import java.util.List;
@@ -99,6 +100,22 @@ class TableCompatibilityTest {
     // --- Error cases ---
 
     @Test
+    @DisplayName("entities whose keys concatenate identically stay distinct")
+    void keysContainingUnderscoresDoNotCollide() {
+        String name = tableName();
+        TableClient table = client.createTable(name);
+
+        table.upsertEntity(new TableEntity("a_b", "c").addProperty("Who", "first"));
+        table.upsertEntity(new TableEntity("a", "b_c").addProperty("Who", "second"));
+
+        assertEquals(2, table.listEntities().stream().count());
+        assertEquals("first", table.getEntity("a_b", "c").getProperty("Who"));
+        assertEquals("second", table.getEntity("a", "b_c").getProperty("Who"));
+
+        client.deleteTable(name);
+    }
+
+    @Test
     @DisplayName("get missing entity → TableServiceException (404)")
     void entityNotFound() {
         String name = tableName();
@@ -107,6 +124,22 @@ class TableCompatibilityTest {
         TableServiceException ex = assertThrows(TableServiceException.class,
             () -> table.getEntity("no-pk", "no-rk"));
         assertEquals(404, ex.getResponse().getStatusCode());
+
+        client.deleteTable(name);
+    }
+
+    @Test
+    @DisplayName("create existing entity → TableServiceException (409), stored entity unchanged")
+    void entityAlreadyExists() {
+        String name = tableName();
+        TableClient table = client.createTable(name);
+        table.createEntity(new TableEntity("p1", "r1").addProperty("Value", "original"));
+
+        TableServiceException ex = assertThrows(TableServiceException.class,
+            () -> table.createEntity(new TableEntity("p1", "r1").addProperty("Value", "overwrite")));
+        assertEquals(409, ex.getResponse().getStatusCode());
+        assertEquals(TableErrorCode.ENTITY_ALREADY_EXISTS, ex.getValue().getErrorCode());
+        assertEquals("original", table.getEntity("p1", "r1").getProperty("Value"));
 
         client.deleteTable(name);
     }
@@ -257,6 +290,31 @@ class TableCompatibilityTest {
         TableServiceException ex = assertThrows(TableServiceException.class,
             () -> table.updateEntityWithResponse(entity, TableEntityUpdateMode.REPLACE, true, null, null));
         assertEquals(412, ex.getResponse().getStatusCode());
+
+        client.deleteTable(name);
+    }
+
+    @Test
+    @DisplayName("batch transaction: creating an existing entity fails the whole changeset")
+    void batchTransactionRollsBackOnExistingEntity() {
+        String name = tableName();
+        TableClient table = client.createTable(name);
+        table.createEntity(new TableEntity("p1", "r1").addProperty("Value", "original"));
+
+        List<TableTransactionAction> actions = List.of(
+            new TableTransactionAction(TableTransactionActionType.CREATE, new TableEntity("p1", "new")),
+            new TableTransactionAction(TableTransactionActionType.CREATE,
+                new TableEntity("p1", "r1").addProperty("Value", "overwrite"))
+        );
+        TableTransactionFailedException ex = assertThrows(TableTransactionFailedException.class,
+            () -> table.submitTransaction(actions));
+        assertEquals(TableErrorCode.ENTITY_ALREADY_EXISTS, ex.getValue().getErrorCode());
+        assertEquals(1, ex.getFailedTransactionActionIndex());
+
+        assertEquals("original", table.getEntity("p1", "r1").getProperty("Value"));
+        TableServiceException missing = assertThrows(TableServiceException.class,
+            () -> table.getEntity("p1", "new"));
+        assertEquals(404, missing.getResponse().getStatusCode());
 
         client.deleteTable(name);
     }

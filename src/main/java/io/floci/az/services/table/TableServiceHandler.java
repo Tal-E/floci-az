@@ -1,6 +1,8 @@
 package io.floci.az.services.table;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.floci.az.config.EmulatorConfig;
 import io.floci.az.core.AzureErrorResponse;
 import io.floci.az.core.AzureRequest;
@@ -35,6 +37,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -55,12 +58,14 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final EmulatorConfig config;
+    private final Object writeLock = new Object();
 
 
     @Inject
     public TableServiceHandler(StorageFactory storageFactory, EmulatorConfig config) {
         this.config = config;
         this.store = storageFactory.create("table");
+        TableEntityKeys.migrateLegacyKeys(store, NS_PREFIX, objectMapper);
     }
 
     @Override
@@ -124,9 +129,9 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
             if ("GET".equalsIgnoreCase(method)) {
                 response = listTables(request);
             } else if ("POST".equalsIgnoreCase(method)) {
-                response = createTable(request);
+                response = mutate(() -> createTable(request));
             } else if ("DELETE".equalsIgnoreCase(method)) {
-                response = deleteTable(request, extractTableNameFromTablesPath(path));
+                response = mutate(() -> deleteTable(request, extractTableNameFromTablesPath(path)));
             } else {
                 response = new AzureErrorResponse("NotImplemented", "The requested operation is not implemented.")
                         .toODataResponse(501);
@@ -140,19 +145,20 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
             } else {
                 tableName = path;
             }
+            String entityPart = pkRkPart;
 
             if ("POST".equalsIgnoreCase(method)) {
-                response = pkRkPart.isEmpty()
+                response = mutate(() -> entityPart.isEmpty()
                         ? insertEntity(request, tableName)
-                        : updateEntity(request, tableName, pkRkPart);
+                        : updateEntity(request, tableName, entityPart));
             } else if ("GET".equalsIgnoreCase(method)) {
                 response = pkRkPart.isEmpty()
                         ? queryEntities(request, tableName)
                         : getEntity(request, tableName, pkRkPart);
             } else if ("DELETE".equalsIgnoreCase(method)) {
-                response = deleteEntity(request, tableName, pkRkPart);
+                response = mutate(() -> deleteEntity(request, tableName, entityPart));
             } else if ("PUT".equalsIgnoreCase(method) || "MERGE".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) {
-                response = updateEntity(request, tableName, pkRkPart);
+                response = mutate(() -> updateEntity(request, tableName, entityPart));
             } else {
                 response = new AzureErrorResponse("NotImplemented", "The requested operation is not implemented.")
                         .toODataResponse(501);
@@ -164,6 +170,18 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
                 .header("x-ms-version", request.headers().getHeaderString("x-ms-version"))
                 .header("DataServiceVersion", "3.0;")
                 .build();
+    }
+
+    /**
+     * Runs a write under the handler's write lock. Each write is a read-check-write against the
+     * store (existence for Insert, ETag for If-Match), and the store offers no compare-and-set, so
+     * concurrent writers must be serialised for those checks to hold. {@code $batch} takes the same
+     * lock itself, after parsing, around its snapshot, execution and rollback.
+     */
+    private Response mutate(Supplier<Response> write) {
+        synchronized (writeLock) {
+            return write.get();
+        }
     }
 
     private Response getTableServiceProperties() {
@@ -251,11 +269,15 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
                         "PartitionKey and RowKey are required.")
                         .toODataResponse(Response.Status.BAD_REQUEST.getStatusCode());
             }
-            String key = pk + "_" + rk;
+            String key = TableEntityKeys.entityKey(pk, rk);
+            String storeKey = objKey(request.accountName(), tableName, key);
+            if (store.get(storeKey).isPresent()) {
+                return entityAlreadyExists();
+            }
             String etag = UUID.randomUUID().toString();
             entity.put("Timestamp", ISO_TIMESTAMP.format(Instant.now()));
 
-            store.put(objKey(request.accountName(), tableName, key),
+            store.put(storeKey,
                     new StoredObject(key, objectMapper.writeValueAsBytes(entity), Map.of(), Instant.now(), etag));
 
             // Feature 5: Prefer header handling
@@ -278,10 +300,15 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
         }
     }
 
+    private static Response entityAlreadyExists() {
+        return new AzureErrorResponse("EntityAlreadyExists", "The specified entity already exists.")
+                .toODataResponse(Response.Status.CONFLICT.getStatusCode());
+    }
+
     private Response getEntity(AzureRequest request, String tableName, String pkRkPart) {
         String pk = extractValue(pkRkPart, "PartitionKey");
         String rk = extractValue(pkRkPart, "RowKey");
-        Optional<StoredObject> object = store.get(objKey(request.accountName(), tableName, pk + "_" + rk));
+        Optional<StoredObject> object = store.get(objKey(request.accountName(), tableName, TableEntityKeys.entityKey(pk, rk)));
 
         if (object.isEmpty()) {
             return new AzureErrorResponse("ResourceNotFound", "The specified resource does not exist.")
@@ -456,7 +483,7 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
     private Response deleteEntity(AzureRequest request, String tableName, String pkRkPart) {
         String pk = extractValue(pkRkPart, "PartitionKey");
         String rk = extractValue(pkRkPart, "RowKey");
-        String storeKey = objKey(request.accountName(), tableName, pk + "_" + rk);
+        String storeKey = objKey(request.accountName(), tableName, TableEntityKeys.entityKey(pk, rk));
 
         Optional<StoredObject> existing = store.get(storeKey);
         if (existing.isEmpty()) {
@@ -493,7 +520,7 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
                         "PartitionKey and RowKey are required.")
                         .toODataResponse(Response.Status.BAD_REQUEST.getStatusCode());
             }
-            String key = pk + "_" + rk;
+            String key = TableEntityKeys.entityKey(pk, rk);
             String storeKey = objKey(request.accountName(), tableName, key);
 
             Optional<StoredObject> existing = store.get(storeKey);
@@ -719,60 +746,64 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
                 }
             }
 
-            // Execute atomically: save originals before starting
-            Map<String, Optional<StoredObject>> originals = new LinkedHashMap<>();
-            for (BatchOp op : ops) {
-                if (!op.pkRkPart().isEmpty()) {
-                    String pk = extractValue(op.pkRkPart(), "PartitionKey");
-                    String rk = extractValue(op.pkRkPart(), "RowKey");
-                    if (!pk.isEmpty() && !rk.isEmpty()) {
-                        String storeKey = objKey(op.accountName(), op.tableName(), pk + "_" + rk);
-                        originals.putIfAbsent(storeKey, store.get(storeKey));
-                    }
-                } else if (op.entityBody() != null) {
-                    String pk = (String) op.entityBody().get("PartitionKey");
-                    String rk = (String) op.entityBody().get("RowKey");
-                    if (pk != null && rk != null) {
-                        String storeKey = objKey(op.accountName(), op.tableName(), pk + "_" + rk);
-                        originals.putIfAbsent(storeKey, store.get(storeKey));
-                    }
-                }
-            }
-
-            // Execute all operations, collecting results
-            List<Response> results = new ArrayList<>();
-            boolean failed = false;
-            int failedIdx = -1;
-            Response failedResponse = null;
-
-            for (int i = 0; i < ops.size(); i++) {
-                BatchOp op = ops.get(i);
-                Response opResponse = executeBatchOp(op.accountName(), op.tableName(),
-                        op.method(), op.pkRkPart(), op.entityBody(), op.ifMatch());
-                results.add(opResponse);
-                if (opResponse.getStatus() >= 400) {
-                    failed = true;
-                    failedIdx = i;
-                    failedResponse = opResponse;
-                    break;
-                }
-            }
-
-            if (failed) {
-                // Restore all originals
-                for (Map.Entry<String, Optional<StoredObject>> entry : originals.entrySet()) {
-                    if (entry.getValue().isPresent()) {
-                        store.put(entry.getKey(), entry.getValue().get());
-                    } else {
-                        store.delete(entry.getKey());
+            // Parsing above needs no lock; snapshot, execution and rollback must not interleave
+            // with other writes, or a rollback could overwrite them.
+            synchronized (writeLock) {
+                // Execute atomically: save originals before starting
+                Map<String, Optional<StoredObject>> originals = new LinkedHashMap<>();
+                for (BatchOp op : ops) {
+                    if (!op.pkRkPart().isEmpty()) {
+                        String pk = extractValue(op.pkRkPart(), "PartitionKey");
+                        String rk = extractValue(op.pkRkPart(), "RowKey");
+                        if (!pk.isEmpty() && !rk.isEmpty()) {
+                            String storeKey = objKey(op.accountName(), op.tableName(), TableEntityKeys.entityKey(pk, rk));
+                            originals.putIfAbsent(storeKey, store.get(storeKey));
+                        }
+                    } else if (op.entityBody() != null) {
+                        String pk = (String) op.entityBody().get("PartitionKey");
+                        String rk = (String) op.entityBody().get("RowKey");
+                        if (pk != null && rk != null) {
+                            String storeKey = objKey(op.accountName(), op.tableName(), TableEntityKeys.entityKey(pk, rk));
+                            originals.putIfAbsent(storeKey, store.get(storeKey));
+                        }
                     }
                 }
-                // Return error batch response
-                return buildErrorBatchResponse(failedIdx, failedResponse);
-            }
 
-            // Build successful multipart response
-            return buildBatchResponse(ops.stream().map(BatchOp::method).toList(), results);
+                // Execute all operations, collecting results
+                List<Response> results = new ArrayList<>();
+                boolean failed = false;
+                int failedIdx = -1;
+                Response failedResponse = null;
+
+                for (int i = 0; i < ops.size(); i++) {
+                    BatchOp op = ops.get(i);
+                    Response opResponse = executeBatchOp(op.accountName(), op.tableName(),
+                            op.method(), op.pkRkPart(), op.entityBody(), op.ifMatch());
+                    results.add(opResponse);
+                    if (opResponse.getStatus() >= 400) {
+                        failed = true;
+                        failedIdx = i;
+                        failedResponse = opResponse;
+                        break;
+                    }
+                }
+
+                if (failed) {
+                    // Restore all originals
+                    for (Map.Entry<String, Optional<StoredObject>> entry : originals.entrySet()) {
+                        if (entry.getValue().isPresent()) {
+                            store.put(entry.getKey(), entry.getValue().get());
+                        } else {
+                            store.delete(entry.getKey());
+                        }
+                    }
+                    // Return error batch response
+                    return buildErrorBatchResponse(failedIdx, failedResponse);
+                }
+
+                // Build successful multipart response
+                return buildBatchResponse(ops.stream().map(BatchOp::method).toList(), results);
+            }
 
         } catch (Exception e) {
             LOGGER.errorf(e, "Error executing batch");
@@ -814,11 +845,15 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
                 return new AzureErrorResponse("PropertiesNeedValue", "PartitionKey and RowKey are required.")
                         .toODataResponse(400);
             }
-            String key = pk + "_" + rk;
+            String key = TableEntityKeys.entityKey(pk, rk);
+            String storeKey = objKey(accountName, tableName, key);
+            if (store.get(storeKey).isPresent()) {
+                return entityAlreadyExists();
+            }
             String etag = UUID.randomUUID().toString();
             entity.put("Timestamp", ISO_TIMESTAMP.format(Instant.now()));
 
-            store.put(objKey(accountName, tableName, key),
+            store.put(storeKey,
                     new StoredObject(key, objectMapper.writeValueAsBytes(entity), Map.of(), Instant.now(), etag));
 
             return Response.status(201)
@@ -851,7 +886,7 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
                 return new AzureErrorResponse("PropertiesNeedValue", "PartitionKey and RowKey are required.")
                         .toODataResponse(400);
             }
-            String key = pk + "_" + rk;
+            String key = TableEntityKeys.entityKey(pk, rk);
             String storeKey = objKey(accountName, tableName, key);
             Optional<StoredObject> existing = store.get(storeKey);
 
@@ -891,7 +926,7 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
     private Response deleteEntityDirect(String accountName, String tableName, String pkRkPart, String ifMatch) {
         String pk = extractValue(pkRkPart, "PartitionKey");
         String rk = extractValue(pkRkPart, "RowKey");
-        String storeKey = objKey(accountName, tableName, pk + "_" + rk);
+        String storeKey = objKey(accountName, tableName, TableEntityKeys.entityKey(pk, rk));
 
         Optional<StoredObject> existing = store.get(storeKey);
         if (existing.isEmpty()) {
@@ -979,6 +1014,27 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
     /**
      * Build an error batch response for a failed operation.
      */
+    /**
+     * Azure prefixes the OData error message of a failed changeset with the failing operation's
+     * index ("1:The specified entity already exists."); the SDKs parse it to report which action failed.
+     */
+    private String withFailedIndex(int failedIdx, Object entity) {
+        if (entity == null) {
+            return "";
+        }
+        try {
+            JsonNode body = entity instanceof String s ? objectMapper.readTree(s) : objectMapper.valueToTree(entity);
+            JsonNode message = body.path("odata.error").path("message");
+            if (message instanceof ObjectNode messageNode && message.path("value").isTextual()) {
+                messageNode.put("value", failedIdx + ":" + message.path("value").asText());
+            }
+            return objectMapper.writeValueAsString(body);
+        } catch (IOException | IllegalArgumentException e) {
+            LOGGER.debugv("Batch error body is not an OData error, returning it unchanged: {0}", e.getMessage());
+            return entity.toString();
+        }
+    }
+
     private Response buildErrorBatchResponse(int failedIdx, Response failedResponse) {
         String batchId = UUID.randomUUID().toString().replace("-", "");
         String changesetId = UUID.randomUUID().toString().replace("-", "");
@@ -988,19 +1044,7 @@ public class TableServiceHandler implements AzureServiceHandler, Resettable {
         int status = failedResponse.getStatus();
         String statusText = statusText(status);
 
-        Object entity = failedResponse.getEntity();
-        String bodyStr = "";
-        if (entity != null) {
-            if (entity instanceof String s) {
-                bodyStr = s;
-            } else {
-                try {
-                    bodyStr = objectMapper.writeValueAsString(entity);
-                } catch (Exception e) {
-                    bodyStr = entity.toString();
-                }
-            }
-        }
+        String bodyStr = withFailedIndex(failedIdx, failedResponse.getEntity());
 
         StringBuilder sb = new StringBuilder();
         sb.append("--").append(batchBoundary).append("\r\n");
