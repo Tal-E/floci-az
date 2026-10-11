@@ -32,8 +32,9 @@ class PolicyTest {
     private static final String MG_SCOPE = "/providers/Microsoft.Management/managementGroups/test-mg";
     private static final String DEFINITIONS = SUB_SCOPE + AUTH + "/policyDefinitions";
     private static final String SET_DEFINITIONS = SUB_SCOPE + AUTH + "/policySetDefinitions";
+    private static final String BUILT_IN_GUID = "0a914e76-4921-4c19-b460-a2d36003525a";
     private static final String BUILT_IN_DEFINITION =
-            "/providers/Microsoft.Authorization/policyDefinitions/0a914e76-4921-4c19-b460-a2d36003525a";
+            "/providers/Microsoft.Authorization/policyDefinitions/" + BUILT_IN_GUID;
     private static final String UUID_PATTERN =
             "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
@@ -214,6 +215,44 @@ class PolicyTest {
         // Built-in ids are accepted without lookup: built-ins are not seeded.
         putJson(SET_DEFINITIONS + "/built-in", """
                 {"properties": {"policyDefinitions": [{"policyDefinitionId": "%s"}]}}""".formatted(BUILT_IN_DEFINITION))
+                .statusCode(201);
+    }
+
+    @Test
+    void onlyTenantRootedAuthorizationIdsBypassReferenceLookup() {
+        putJson(DEFINITIONS + "/real", DEFINITION_BODY).statusCode(201);
+        String assignments = RG_SCOPE + AUTH + "/policyAssignments";
+
+        // Relative ids, other providers and ids with extra segments are looked up, and are missing.
+        for (String reference : new String[] {
+                "policyDefinitions/missing",
+                "/providers/Other.Provider/policyDefinitions/missing",
+                "/providers/Microsoft.Authorization/policyDefinitions/missing/extra",
+                "/providers/Microsoft.Authorization/policyDefinitions/"}) {
+            putJson(SET_DEFINITIONS + "/dangling", """
+                    {"properties": {"policyDefinitions": [{"policyDefinitionId": "%s"}]}}""".formatted(reference))
+                    .statusCode(404)
+                    .body("error.code", equalTo("PolicyDefinitionNotFound"));
+            putJson(assignments + "/dangling", """
+                    {"properties": {"policyDefinitionId": "%s"}}""".formatted(reference))
+                    .statusCode(404)
+                    .body("error.code", equalTo("PolicyDefinitionNotFound"));
+        }
+
+        // A built-in set definition is not a definition: a set definition cannot nest it.
+        putJson(SET_DEFINITIONS + "/nested-built-in", """
+                {"properties": {"policyDefinitions": [{"policyDefinitionId": "%s"}]}}"""
+                .formatted("/providers/Microsoft.Authorization/policySetDefinitions/" + BUILT_IN_GUID))
+                .statusCode(404)
+                .body("error.code", equalTo("PolicyDefinitionNotFound"));
+
+        // Built-in ids of the matching type are still accepted, whatever the letter case.
+        putJson(assignments + "/built-in-set", """
+                {"properties": {"policyDefinitionId": "%s"}}"""
+                .formatted("/providers/Microsoft.Authorization/policySetDefinitions/" + BUILT_IN_GUID))
+                .statusCode(201);
+        putJson(assignments + "/built-in-upper", """
+                {"properties": {"policyDefinitionId": "%s"}}""".formatted(BUILT_IN_DEFINITION.toUpperCase()))
                 .statusCode(201);
     }
 

@@ -40,8 +40,8 @@ import java.util.regex.Pattern;
  * <p>This is the control plane only. Definitions are stored and validated structurally, but no
  * policy rule is ever evaluated against resource requests, so nothing is denied, audited or
  * remediated, and there is no compliance state. Built-in definitions are not seeded: the tenant-rooted
- * built-in listings answer an empty collection and built-in ids are accepted in references without
- * validation.</p>
+ * built-in listings answer an empty collection and tenant-rooted {@code Microsoft.Authorization} ids
+ * are accepted in references without validation.</p>
  */
 @ApplicationScoped
 public class PolicyHandler implements AzureServiceHandler, Resettable {
@@ -604,11 +604,13 @@ public class PolicyHandler implements AzureServiceHandler, Resettable {
     }
 
     /**
-     * Definitions in a subscription or management group must exist; tenant-rooted ids are built-in
-     * references and are accepted as-is because built-ins are not seeded.
+     * A referenced definition must exist unless it is a built-in reference, which is accepted as-is
+     * because built-ins are not seeded. Only tenant-rooted {@code Microsoft.Authorization} ids of the
+     * matching type count as built-in; any other id, including relative paths and other providers, is
+     * looked up and rejected when absent.
      */
     private Response requireDefinition(String definitionId) {
-        if (isScopedId(definitionId) && store.getDefinition(definitionId) == null) {
+        if (!isBuiltInId(definitionId, "policyDefinitions") && store.getDefinition(definitionId) == null) {
             return ArmErrors.error(404, "PolicyDefinitionNotFound",
                     "The policy definition '" + leaf(definitionId) + "' could not be found.");
         }
@@ -616,16 +618,20 @@ public class PolicyHandler implements AzureServiceHandler, Resettable {
     }
 
     private Response requireSetDefinition(String setDefinitionId) {
-        if (isScopedId(setDefinitionId) && store.getSetDefinition(setDefinitionId) == null) {
+        if (!isBuiltInId(setDefinitionId, "policySetDefinitions") && store.getSetDefinition(setDefinitionId) == null) {
             return ArmErrors.error(404, "PolicySetDefinitionNotFound",
                     "The policy set definition '" + leaf(setDefinitionId) + "' could not be found.");
         }
         return null;
     }
 
-    private static boolean isScopedId(String id) {
+    /** True for a tenant-rooted {@code /providers/Microsoft.Authorization/{type}/{name}} id. */
+    private static boolean isBuiltInId(String id, String type) {
+        String prefix = "/providers/microsoft.authorization/" + type.toLowerCase(Locale.ROOT) + "/";
         String lower = id.toLowerCase(Locale.ROOT);
-        return lower.contains("/subscriptions/") || lower.contains("/managementgroups/");
+        return lower.startsWith(prefix)
+                && lower.length() > prefix.length()
+                && lower.indexOf('/', prefix.length()) < 0;
     }
 
     /**
