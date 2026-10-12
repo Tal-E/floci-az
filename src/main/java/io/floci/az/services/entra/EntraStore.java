@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
 import java.util.Set;
 
 /**
@@ -119,11 +120,11 @@ public class EntraStore implements Resettable {
         return read(APP_PREFIX + clientId, AppRegistration.class);
     }
 
-    public void putApp(AppRegistration app) {
+    public synchronized void putApp(AppRegistration app) {
         write(APP_PREFIX + app.appId(), app);
     }
 
-    public Optional<AppRegistration> findAppByObjectId(String objectId) {
+    public synchronized Optional<AppRegistration> findAppByObjectId(String objectId) {
         for (AppRegistration app : listApps()) {
             if (app.objectId().equalsIgnoreCase(objectId)) {
                 return Optional.of(app);
@@ -132,8 +133,22 @@ public class EntraStore implements Resettable {
         return Optional.empty();
     }
 
+    /**
+     * Replaces an app registration with {@code change} applied to its current record, under the store's
+     * lock so that overlapping changes compose; empty when the app no longer exists.
+     */
+    public synchronized Optional<AppRegistration> updateApp(String objectId, UnaryOperator<AppRegistration> change) {
+        Optional<AppRegistration> current = findAppByObjectId(objectId);
+        if (current.isEmpty()) {
+            return Optional.empty();
+        }
+        AppRegistration updated = change.apply(current.get());
+        putApp(updated);
+        return Optional.of(updated);
+    }
+
     /** Every app registration, in storage order. */
-    public List<AppRegistration> listApps() {
+    public synchronized List<AppRegistration> listApps() {
         List<AppRegistration> apps = new ArrayList<>();
         for (StoredObject stored : store.scan(key -> key.startsWith(APP_PREFIX))) {
             apps.add(parse(stored.data(), AppRegistration.class, stored.key()));
@@ -141,7 +156,7 @@ public class EntraStore implements Resettable {
         return apps;
     }
 
-    public void removeApp(String appId) {
+    public synchronized void removeApp(String appId) {
         store.delete(APP_PREFIX + appId);
         store.delete(SP_PREFIX + appId);
     }

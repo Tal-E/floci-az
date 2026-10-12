@@ -108,9 +108,13 @@ final class GraphApplications {
     }
 
     private Response list(String filter) {
+        boolean filtered = filter != null && !filter.isBlank();
+        if (filtered && !FILTER_EQ.matcher(filter).matches() && !FILTER_STARTS.matcher(filter).matches()) {
+            return graphError(400, "Request_BadRequest", "Unsupported or invalid $filter: '" + filter + "'.");
+        }
         List<Map<String, Object>> value = new ArrayList<>();
         for (AppRegistration app : store.listApps()) {
-            if (filter == null || filter.isBlank() || matches(app, filter)) {
+            if (!filtered || matches(app, filter)) {
                 value.add(application(app, false));
             }
         }
@@ -161,27 +165,40 @@ final class GraphApplications {
         if (body == null) {
             return graphError(400, "Request_BadRequest", "The request body is not valid JSON.");
         }
-        String displayName = body.get("displayName") instanceof String s && !s.isBlank() ? s : app.displayName();
-        store.putApp(new AppRegistration(app.appId(), app.objectId(), displayName, app.tenantId(), app.secrets()));
-        return Response.status(204).build();
+        Optional<AppRegistration> updated = store.updateApp(app.objectId(), current -> new AppRegistration(
+            current.appId(), current.objectId(),
+            body.get("displayName") instanceof String s && !s.isBlank() ? s : current.displayName(),
+            current.tenantId(), current.secrets()));
+        return updated.isEmpty() ? notFound(app.objectId()) : Response.status(204).build();
     }
 
     private Response addPassword(AzureRequest request, AppRegistration app) {
         Map<String, Object> body = readJson(request);
-        Map<String, Object> given = body != null && body.get("passwordCredential") instanceof Map<?, ?> m
-            ? castMap(m) : Map.of();
+        if (body == null) {
+            return graphError(400, "Request_BadRequest", "The request body is not valid JSON.");
+        }
+        Map<String, Object> given = body.get("passwordCredential") instanceof Map<?, ?> m ? castMap(m) : Map.of();
         Instant start = given.get("startDateTime") instanceof String s && !s.isBlank() ? parseInstant(s) : Instant.now();
+        if (start == null) {
+            return graphError(400, "Request_BadRequest", "startDateTime and endDateTime must be ISO 8601 date-times.");
+        }
         Instant end = given.get("endDateTime") instanceof String s && !s.isBlank() ? parseInstant(s)
             : start.plus(730, ChronoUnit.DAYS);
-        if (start == null || end == null) {
+        if (end == null) {
             return graphError(400, "Request_BadRequest", "startDateTime and endDateTime must be ISO 8601 date-times.");
         }
         String secret = randomSecret();
         ClientSecret credential = new ClientSecret(UUID.randomUUID().toString(), secret, secret.substring(0, 3),
             given.get("displayName") instanceof String d ? d : null, start.toString(), end.toString());
-        List<ClientSecret> secrets = new ArrayList<>(app.secrets() == null ? List.of() : app.secrets());
-        secrets.add(credential);
-        store.putApp(new AppRegistration(app.appId(), app.objectId(), app.displayName(), app.tenantId(), List.copyOf(secrets)));
+        Optional<AppRegistration> updated = store.updateApp(app.objectId(), current -> {
+            List<ClientSecret> secrets = new ArrayList<>(current.secrets() == null ? List.of() : current.secrets());
+            secrets.add(credential);
+            return new AppRegistration(current.appId(), current.objectId(), current.displayName(), current.tenantId(),
+                List.copyOf(secrets));
+        });
+        if (updated.isEmpty()) {
+            return notFound(app.objectId());
+        }
         Map<String, Object> response = passwordCredential(credential);
         response.put("secretText", secret);
         response.put("@odata.context", baseContext + "$metadata#microsoft.graph.passwordCredential");
@@ -193,12 +210,19 @@ final class GraphApplications {
         if (body == null || !(body.get("keyId") instanceof String keyId)) {
             return graphError(400, "Request_BadRequest", "A keyId is required.");
         }
-        List<ClientSecret> secrets = new ArrayList<>(app.secrets() == null ? List.of() : app.secrets());
-        boolean removed = secrets.removeIf(secret -> keyId.equalsIgnoreCase(secret.keyId()));
-        if (!removed) {
+        boolean[] removed = {false};
+        Optional<AppRegistration> updated = store.updateApp(app.objectId(), current -> {
+            List<ClientSecret> secrets = new ArrayList<>(current.secrets() == null ? List.of() : current.secrets());
+            removed[0] = secrets.removeIf(secret -> keyId.equalsIgnoreCase(secret.keyId()));
+            return new AppRegistration(current.appId(), current.objectId(), current.displayName(), current.tenantId(),
+                List.copyOf(secrets));
+        });
+        if (updated.isEmpty()) {
+            return notFound(app.objectId());
+        }
+        if (!removed[0]) {
             return graphError(404, "Request_ResourceNotFound", "No password credential found with key id '" + keyId + "'.");
         }
-        store.putApp(new AppRegistration(app.appId(), app.objectId(), app.displayName(), app.tenantId(), List.copyOf(secrets)));
         return Response.status(204).build();
     }
 
