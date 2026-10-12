@@ -164,6 +164,13 @@ class ManagementGroupTest {
         given().contentType("application/json").body("{\"name\": \"fresh\", \"type\": \"Microsoft.Management/managementGroups\"}")
                 .when().post(BASE + "/checkNameAvailability" + API)
                 .then().statusCode(200).body("nameAvailable", equalTo(true));
+        // A reserved segment is not available, and creation refuses it the same way.
+        given().contentType("application/json").body("{\"name\": \"operations\", \"type\": \"Microsoft.Management/managementGroups\"}")
+                .when().post(BASE + "/checkNameAvailability" + API)
+                .then().statusCode(200).body("nameAvailable", equalTo(false)).body("reason", equalTo("Invalid"));
+        given().contentType("application/json").body("{}")
+                .when().put(BASE + "/managementGroups/getEntities" + API)
+                .then().statusCode(400).body("error.code", equalTo("InvalidManagementGroupName"));
         given().when().get(BASE + "/operations" + API).then().statusCode(200).body("value[0].name", notNullValue());
         given().when().get(BASE + "/managementGroups/prod/settings/default" + API).then().statusCode(200)
                 .body("properties.defaultManagementGroup", equalTo(ROOT));

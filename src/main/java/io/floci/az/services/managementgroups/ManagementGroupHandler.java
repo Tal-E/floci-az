@@ -6,6 +6,7 @@ import io.floci.az.core.AzureServiceHandler;
 import io.floci.az.core.ServiceRoutes;
 import io.floci.az.core.arm.ArmErrors;
 import io.floci.az.core.arm.ArmJson;
+import io.floci.az.core.arm.SubscriptionRule;
 import io.floci.az.core.directory.AzureDirectory;
 import io.floci.az.core.directory.Subscription;
 import io.floci.az.services.managementgroups.ManagementGroupStore.Group;
@@ -14,7 +15,6 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -198,27 +198,19 @@ public class ManagementGroupHandler implements AzureServiceHandler {
             return ArmErrors.error(400, "InvalidRequestContent", "The request content was invalid and could not be deserialized.");
         }
         Map<String, Object> props = ArmJson.cast(body.get("properties"));
-        Group root = store.root();
-        if (name.equalsIgnoreCase(root.name())) {
-            return ArmErrors.error(400, "InvalidRequest", "The tenant root management group cannot be created or updated.");
-        }
-        String parentName = root.name();
+        String parentName = null;
         Object details = props.get("details");
         if (details instanceof Map<?, ?> d && ArmJson.cast(d.get("parent")).get("id") instanceof String parentId) {
             parentName = lastSegment(parentId);
-            if (store.get(parentName).isEmpty()) {
-                return ArmErrors.error(400, "InvalidRequest", "The parent management group '" + parentName + "' could not be found.");
-            }
-            if (store.isWithin(parentName, name)) {
-                return ArmErrors.error(400, "InvalidRequest", "A management group cannot be moved under itself or one of its descendants.");
-            }
         }
-        Optional<Group> existing = store.get(name);
-        String displayName = ArmJson.string(props, "displayName", existing.map(Group::displayName).orElse(name));
-        Group group = new Group(name, displayName, directory.defaultTenantId(), parentName,
-            existing.map(g -> g.version() + 1).orElse(1), Instant.now(), null);
-        store.put(group);
-        LOG.infof("Management group %s %s under %s", name, existing.isPresent() ? "updated" : "created", parentName);
+        boolean existed = store.get(name).isPresent();
+        Group group;
+        try {
+            group = store.createOrUpdate(name, ArmJson.string(props, "displayName", null), parentName);
+        } catch (ManagementGroupStore.HierarchyException e) {
+            return ArmErrors.error(e.status(), e.code(), e.getMessage());
+        }
+        LOG.infof("Management group %s %s under %s", name, existed ? "updated" : "created", group.parent());
         return Response.ok(representation(group)).build();
     }
 
@@ -227,46 +219,30 @@ public class ManagementGroupHandler implements AzureServiceHandler {
         if (existing.isEmpty()) {
             return notFound(name);
         }
-        Group group = existing.get();
-        if (group.parent() == null) {
-            return ArmErrors.error(400, "InvalidRequest", "The tenant root management group cannot be updated.");
-        }
         Map<String, Object> body;
         try {
             body = ArmJson.parseBodyStrict(req);
         } catch (ArmJson.InvalidBodyException e) {
             return ArmErrors.error(400, "InvalidRequestContent", "The request content was invalid and could not be deserialized.");
         }
-        String parentName = group.parent();
-        if (body.get("parentGroupId") instanceof String parentId && !parentId.isBlank()) {
-            parentName = lastSegment(parentId);
-            if (store.get(parentName).isEmpty()) {
-                return ArmErrors.error(400, "InvalidRequest", "The parent management group '" + parentName + "' could not be found.");
-            }
-            if (store.isWithin(parentName, name)) {
-                return ArmErrors.error(400, "InvalidRequest", "A management group cannot be moved under itself or one of its descendants.");
-            }
+        String parentName = body.get("parentGroupId") instanceof String parentId && !parentId.isBlank() ? lastSegment(parentId) : null;
+        Optional<Group> updated;
+        try {
+            updated = store.move(name, ArmJson.string(body, "displayName", null), parentName);
+        } catch (ManagementGroupStore.HierarchyException e) {
+            return ArmErrors.error(e.status(), e.code(), e.getMessage());
         }
-        Group updated = new Group(name, ArmJson.string(body, "displayName", group.displayName()), group.tenantId(), parentName,
-            group.version() + 1, Instant.now(), null);
-        store.put(updated);
-        return Response.ok(representation(updated)).build();
+        return updated.map(group -> Response.ok(representation(group)).build()).orElseGet(() -> notFound(name));
     }
 
     private Response delete(String name) {
-        Optional<Group> existing = store.get(name);
-        if (existing.isEmpty()) {
-            return Response.status(204).build();
+        try {
+            if (store.delete(name)) {
+                LOG.infof("Management group %s deleted", name);
+            }
+        } catch (ManagementGroupStore.HierarchyException e) {
+            return ArmErrors.error(e.status(), e.code(), e.getMessage());
         }
-        if (existing.get().parent() == null) {
-            return ArmErrors.error(400, "InvalidRequest", "The tenant root management group cannot be deleted.");
-        }
-        if (!store.childGroups(name).isEmpty() || !store.childSubscriptions(name).isEmpty()) {
-            return ArmErrors.error(409, "Conflict",
-                "The management group '" + name + "' has children and cannot be deleted. Move or delete its children first.");
-        }
-        store.remove(name);
-        LOG.infof("Management group %s deleted", name);
         return Response.status(204).build();
     }
 
@@ -328,8 +304,20 @@ public class ManagementGroupHandler implements AzureServiceHandler {
         if (found.isEmpty()) {
             return notFound(name);
         }
-        store.place(subscriptionId, found.get().name());
-        Subscription subscription = directory.subscription(subscriptionId).orElseThrow();
+        // The membership path has no subscription segment, so the gate's subscription checks apply here.
+        Optional<Subscription> known = directory.subscription(subscriptionId);
+        if (known.isEmpty() && config.strictSubscriptions()) {
+            return ArmErrors.subscriptionNotFound(subscriptionId);
+        }
+        if (known.isPresent() && !known.get().state().allowsWrites()) {
+            return SubscriptionRule.readOnly(known.get());
+        }
+        Subscription subscription;
+        try {
+            subscription = store.place(subscriptionId, found.get().name());
+        } catch (ManagementGroupStore.HierarchyException e) {
+            return ArmErrors.error(e.status(), e.code(), e.getMessage());
+        }
         LOG.infof("Subscription %s placed under management group %s", subscriptionId, name);
         return Response.ok(subscriptionUnderGroup(found.get(), subscription)).build();
     }
@@ -365,7 +353,7 @@ public class ManagementGroupHandler implements AzureServiceHandler {
             properties.put("parentNameChain", store.ancestors(group.name()).stream().map(Group::name).toList());
             value.add(entity(group.id(), TYPE, group.name(), properties));
         }
-        for (Subscription subscription : directory.subscriptions()) {
+        for (Subscription subscription : store.tenantSubscriptions()) {
             Group parent = store.parentOf(subscription.id());
             Map<String, Object> properties = new LinkedHashMap<>();
             properties.put("tenantId", subscription.tenantId());
@@ -406,7 +394,7 @@ public class ManagementGroupHandler implements AzureServiceHandler {
         Map<String, Object> body = ArmJson.parseBodyLenient(req);
         String name = ArmJson.string(body, "name", "");
         Map<String, Object> result = new LinkedHashMap<>();
-        if (!NAME.matcher(name).matches()) {
+        if (!NAME.matcher(name).matches() || RESERVED_NAMES.contains(name.toLowerCase(Locale.ROOT))) {
             result.put("nameAvailable", false);
             result.put("reason", "Invalid");
             result.put("message", "The management group name is invalid.");
