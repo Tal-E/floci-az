@@ -348,6 +348,8 @@ floci-az:
       insights: true      # FLOCI_AZ_SERVICES_POLICY_INSIGHTS: Microsoft.PolicyInsights compliance states, queries, summaries and scans
     resource-graph:
       enabled: true       # FLOCI_AZ_SERVICES_RESOURCE_GRAPH_ENABLED: Microsoft.ResourceGraph queries (KQL subset) over the emulator's resources
+    management-groups:
+      enabled: true       # FLOCI_AZ_SERVICES_MANAGEMENT_GROUPS_ENABLED: Microsoft.Management management groups and subscription membership
 
   auth:
     # Not enforced yet: every value behaves like dev, accepting any credentials without
