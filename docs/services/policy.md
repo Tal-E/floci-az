@@ -184,9 +184,11 @@ floci-az:
   seeded. Tenant-rooted listings return an empty collection, tenant-rooted reads return
   `PolicyDefinitionNotFound` / `PolicySetDefinitionNotFound`, and built-in ids
   (`/providers/Microsoft.Authorization/policyDefinitions/{guid}` and
-  `/providers/Microsoft.Authorization/policySetDefinitions/{guid}`) are accepted in assignments and set
-  definitions without validation. Every other reference, including relative ids and ids under another
-  provider namespace, must name an existing definition or set definition.
+  `/providers/Microsoft.Authorization/policySetDefinitions/{guid}`) are accepted without validation
+  where their type belongs: a built-in definition id in an assignment or in a set definition's
+  `policyDefinitions`, a built-in set definition id in an assignment only. Every other reference,
+  including relative ids and ids under another provider namespace, must name an existing definition or
+  set definition.
 - **Management groups are scopes, not resources.** `Microsoft.Management/managementGroups/{mg}` is
   accepted as a scope for definitions, set definitions, assignments and exemptions, but management
   groups themselves are not modelled: any id is accepted, there is no hierarchy, and a
