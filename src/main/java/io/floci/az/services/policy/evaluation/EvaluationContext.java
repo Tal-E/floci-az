@@ -16,8 +16,11 @@ import java.util.Map;
  */
 final class EvaluationContext {
 
-    /** A {@code count} iteration: a value-count member bound to a name, or a field-count member in focus. */
-    record Binding(String name, Object value, String focusAlias) {
+    /**
+     * A {@code count} iteration: a value-count member bound to a name, or a field-count member whose
+     * enclosing array members are in focus, keyed by the lower-cased alias of each {@code [*]} level.
+     */
+    record Binding(String name, Object value, Map<String, Object> focus) {
     }
 
     final Map<String, Object> content;
@@ -73,8 +76,8 @@ final class EvaluationContext {
     /** The member in focus for a field-count alias, or null when no enclosing count enumerates it. */
     Object focusFor(String aliasLower) {
         for (Binding binding : bindings) {
-            if (binding.focusAlias() != null && binding.focusAlias().equals(aliasLower)) {
-                return binding.value();
+            if (binding.focus() != null && binding.focus().containsKey(aliasLower)) {
+                return binding.focus().get(aliasLower);
             }
         }
         return null;
@@ -82,7 +85,7 @@ final class EvaluationContext {
 
     boolean hasFocus(String aliasLower) {
         for (Binding binding : bindings) {
-            if (binding.focusAlias() != null && binding.focusAlias().equals(aliasLower)) {
+            if (binding.focus() != null && binding.focus().containsKey(aliasLower)) {
                 return true;
             }
         }
@@ -105,8 +108,14 @@ final class EvaluationContext {
                 return binding.value();
             }
         }
-        if (name.toLowerCase(Locale.ROOT).contains("[*]") || name.contains("/")) {
-            return ResourceFields.resolve(name, this).asValue();
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.contains("[*]") || name.contains("/")) {
+            ResourceFields.FieldValue resolved = ResourceFields.resolve(name, this);
+            // Inside a count over the alias's array, current() is the member's value itself, not a one-member array.
+            if (resolved.collection() && hasFocus(lower.substring(0, lower.lastIndexOf("[*]") + 3))) {
+                return resolved.members().isEmpty() ? null : resolved.members().getFirst();
+            }
+            return resolved.asValue();
         }
         throw new ArmExpressions.EvaluationException("current('" + name + "') does not name an enclosing count");
     }

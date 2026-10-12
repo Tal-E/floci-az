@@ -658,6 +658,9 @@ final class ArmExpressions {
                     String s = str(a, 0);
                     int width = (int) toLong(a.get(1));
                     String pad = a.size() > 2 ? str(a, 2) : " ";
+                    if (pad.isEmpty()) {
+                        throw new EvaluationException("padLeft() padding character must not be empty");
+                    }
                     StringBuilder sb = new StringBuilder();
                     while (sb.length() + s.length() < width) {
                         sb.append(pad);

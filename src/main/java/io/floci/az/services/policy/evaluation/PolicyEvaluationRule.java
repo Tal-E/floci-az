@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.az.config.EmulatorConfig;
 import io.floci.az.core.AzureRequest;
 import io.floci.az.core.arm.ArmCall;
+import io.floci.az.core.arm.ArmErrors;
 import io.floci.az.core.arm.ArmRequestRule;
 import io.floci.az.core.arm.ArmVerdict;
 import io.floci.az.services.policy.evaluation.PolicyEngine.Match;
@@ -81,7 +82,7 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         }
         Map<String, Object> content = call.body().json();
         if (content == null) {
-            return ArmVerdict.proceed(); // not a JSON object: the handler answers 400 itself
+            content = Map.of(); // empty, or not a JSON object: evaluated as the empty content a lenient handler accepts
         }
         AzureRequest request = call.request();
         Map<String, Object> identity = identity(request);
@@ -93,8 +94,9 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         try {
             outcome = engine.evaluate(evaluation);
         } catch (RuntimeException e) {
-            LOG.errorf(e, "Policy evaluation failed for %s %s; the request proceeds", call.method(), call.id().id());
-            return ArmVerdict.proceed();
+            LOG.errorf(e, "Policy evaluation failed for %s %s", call.method(), call.id().id());
+            return ArmVerdict.respond(ArmErrors.error(500, "PolicyEvaluationFailed",
+                "The assigned policies could not be evaluated for this request: " + e.getMessage()));
         }
         if (outcome.denied()) {
             for (Match denial : outcome.denials()) {

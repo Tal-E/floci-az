@@ -101,6 +101,37 @@ class PolicyRuleEvaluatorTest {
                            "where": {"value": "[first(field('Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix'))]", "equals": "*"}},
                  "equals": 1}""";
         assertTrue(evaluate(viaFirstField, nsg("*", "10.0.0.0/8")));
+        // field() of an array alias in focus is a one-member array holding the whole value, not its first character.
+        String wholePrefix = """
+                {"count": {"field": "Microsoft.Network/networkSecurityGroups/securityRules[*]",
+                           "where": {"value": "[first(field('Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix'))]", "equals": "10.0.0.0/8"}},
+                 "equals": 1}""";
+        assertTrue(evaluate(wholePrefix, nsg("*", "10.0.0.0/8")));
+    }
+
+    @Test
+    void fieldCountOverAPropertyAliasFocusesEachMember() {
+        // Counting securityRules[*].access with a where on the same alias sees one member at a time.
+        String allowed = """
+                {"count": {"field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+                           "where": {"field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access", "equals": "Allow"}},
+                 "equals": 1}""";
+        assertTrue(evaluate(allowed, nsg("*", "10.0.0.0/8")));
+        String allowedFromAnywhere = """
+                {"count": {"field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access",
+                           "where": {"allOf": [
+                              {"field": "Microsoft.Network/networkSecurityGroups/securityRules[*].access", "equals": "Allow"},
+                              {"field": "Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix", "equals": "*"}]}},
+                 "equals": 1}""";
+        assertTrue(evaluate(allowedFromAnywhere, nsg("*", "10.0.0.0/8")));
+        assertFalse(evaluate(allowedFromAnywhere, nsg("10.0.0.0/8", "*")));
+    }
+
+    @Test
+    void missingArrayMembersResolveToNull() {
+        EvaluationContext ctx = nsg("10.0.0.0/8", null);
+        assertTrue(evaluate("{\"field\": \"Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\", \"notEquals\": \"*\"}", ctx));
+        assertTrue(evaluate("{\"count\": {\"field\": \"Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\", \"where\": {\"field\": \"Microsoft.Network/networkSecurityGroups/securityRules[*].sourceAddressPrefix\", \"exists\": \"false\"}}, \"equals\": 1}", ctx));
     }
 
     @Test

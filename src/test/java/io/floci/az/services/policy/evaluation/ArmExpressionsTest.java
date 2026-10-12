@@ -111,6 +111,7 @@ class ArmExpressionsTest {
         assertThrows(ArmExpressions.EvaluationException.class, () -> eval("[parameters('missing')]"));
         assertThrows(ArmExpressions.EvaluationException.class, () -> eval("[noSuchFunction(1)]"));
         assertThrows(ArmExpressions.EvaluationException.class, () -> eval("[concat('unterminated]"));
+        assertThrows(ArmExpressions.EvaluationException.class, () -> eval("[padLeft('x', 2, '')]"));
         assertFalse(((Boolean) eval("[contains(field('tags'), 'missing')]")));
     }
 }

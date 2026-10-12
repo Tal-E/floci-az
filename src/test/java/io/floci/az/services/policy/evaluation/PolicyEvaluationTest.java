@@ -128,6 +128,55 @@ class PolicyEvaluationTest {
                 .body("error.code", equalTo("RequestDisallowedByPolicy"));
     }
 
+    @Test
+    void failedEvaluationDeniesWhateverTheEffect() {
+        putJson(DEFINITIONS + "/broken-audit", """
+                {"properties": {"mode": "All",
+                  "policyRule": {"if": {"value": "[substring(field('name'), 0, 20)]", "equals": "never"},
+                                 "then": {"effect": "audit"}}}}""", POLICY_API).statusCode(201);
+        assign("broken-audit", DEFINITIONS + "/broken-audit", "{}");
+
+        storageAccount("short", "TLS1_2").statusCode(403)
+                .body("error.code", equalTo("RequestDisallowedByPolicy"))
+                .body("error.additionalInfo[0].info.policyDefinitionEffect", equalTo("deny"));
+
+        // Under DoNotEnforce the failure is logged and the write proceeds.
+        given().when().delete(ASSIGNMENTS + "/broken-audit" + POLICY_API).then().statusCode(200);
+        assign("broken-relaxed", DEFINITIONS + "/broken-audit", "\"enforcementMode\": \"DoNotEnforce\"");
+        storageAccount("short", "TLS1_2").statusCode(admitted());
+    }
+
+    @Test
+    void unresolvableParametersDeny() {
+        definition("tls", TLS_RULE.formatted("audit"), "Secure transfer");
+        putJson(SET_DEFINITIONS + "/broken-set", """
+                {"properties": {"policyDefinitions": [
+                    {"policyDefinitionReferenceId": "tls", "policyDefinitionId": "%s",
+                     "parameters": {"unused": {"value": "[parameters('missing')]"}}}]}}"""
+                .formatted(DEFINITIONS + "/tls"), POLICY_API).statusCode(201);
+        assign("broken-set", SET_DEFINITIONS + "/broken-set", "{}");
+
+        storageAccount("sa1", "TLS1_2").statusCode(403)
+                .body("error.code", equalTo("RequestDisallowedByPolicy"))
+                .body("error.additionalInfo[0].info.policyDefinitionReferenceId", equalTo("tls"));
+    }
+
+    @Test
+    void emptyBodiesAreEvaluatedAsEmptyContent() {
+        putJson(DEFINITIONS + "/rg-tag", """
+                {"properties": {"mode": "All",
+                  "policyRule": {"if": {"allOf": [
+                      {"field": "type", "equals": "Microsoft.Resources/subscriptions/resourceGroups"},
+                      {"field": "tags['CreationDate']", "exists": "false"}]},
+                   "then": {"effect": "deny"}}}}""", POLICY_API).statusCode(201);
+        putJson(SUB_SCOPE + AUTH + "/policyAssignments/rg-tag", "{\"properties\": {\"policyDefinitionId\": \"" + DEFINITIONS + "/rg-tag\"}}", POLICY_API)
+                .statusCode(201);
+
+        given().contentType("application/json")
+                .when().put(SUB_SCOPE + "/resourceGroups/bodyless-rg?api-version=2021-04-01")
+                .then().statusCode(403).body("error.code", equalTo("RequestDisallowedByPolicy"));
+    }
+
     // ── Audit and append ────────────────────────────────────────────────────────
 
     @Test

@@ -12,10 +12,10 @@ resource write: `deny` refuses the request with `RequestDisallowedByPolicy`, `ap
 > **HTTP-only, no Docker.** All policy state is in-memory and ephemeral, like the rest of the ARM
 > control plane.
 
-> **Control plane only.** Definitions are stored and validated structurally, but policy rules are
-> never evaluated against resource requests: nothing is denied, audited or remediated, and there is no
-> compliance state (`Microsoft.PolicyInsights` is not implemented). Use this to exercise the code that
-> authors and deploys policies, not the code that reacts to their effects.
+> **Request-time effects only.** `deny`, `append` and `audit` fire when a resource is written; there is
+> no compliance scan of existing resources, no remediation and no compliance state
+> (`Microsoft.PolicyInsights` is not implemented). A rule the engine cannot evaluate denies the request
+> rather than standing aside, so a broken rule fails loudly.
 
 ---
 

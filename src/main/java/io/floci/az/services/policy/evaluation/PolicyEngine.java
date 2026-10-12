@@ -48,7 +48,7 @@ public class PolicyEngine {
      * One definition whose {@code if} condition matched, with the effect it resolved to.
      *
      * @param enforced false under {@code enforcementMode: DoNotEnforce}, when the effect is evaluated but not applied
-     * @param error    the evaluation failure that made the match an implicit deny, or null
+     * @param error    the evaluation failure that made the match a denial, or null
      */
     public record Match(Map<String, Object> assignment, Map<String, Object> definition, Map<String, Object> setDefinition,
                         String referenceId, String effect, boolean enforced, List<Map<String, Object>> trace,
@@ -141,7 +141,14 @@ public class PolicyEngine {
                 if (match == null) {
                     continue;
                 }
-                if ("append".equals(effect) && match.enforced() && match.error() == null) {
+                if (match.error() != null) {
+                    // A rule the engine cannot evaluate denies the request rather than silently standing aside.
+                    if (match.enforced()) {
+                        match = new Match(match.assignment(), match.definition(), match.setDefinition(), match.referenceId(),
+                            "deny", true, match.trace(), match.nonComplianceMessage(), match.error());
+                        denials.add(match);
+                    }
+                } else if ("append".equals(effect) && match.enforced()) {
                     String conflict = append(candidate, base.forDefinition(candidate.parameters(), candidate.policy()));
                     if (conflict != null) {
                         match = new Match(match.assignment(), match.definition(), match.setDefinition(), match.referenceId(),
@@ -287,10 +294,11 @@ public class PolicyEngine {
 
     // ── Expansion ───────────────────────────────────────────────────────────────
 
-    /** One assigned definition with its resolved parameters and effect. */
+    /** One assigned definition with its resolved parameters and effect, or the failure that resolving them raised. */
     private record Candidate(Map<String, Object> assignment, Map<String, Object> definition,
                              Map<String, Object> setDefinition, String referenceId, Map<String, Object> parameters,
-                             Map<String, Object> policy, String effect, boolean enforced, String nonComplianceMessage) {
+                             Map<String, Object> policy, String effect, boolean enforced, String nonComplianceMessage,
+                             String error) {
     }
 
     private void expand(Map<String, Object> assignment, List<Candidate> out, EvaluationContext base) {
@@ -350,22 +358,24 @@ public class PolicyEngine {
         if (mode.contains(".")) {
             return; // a resource-provider mode (Microsoft.Kubernetes.Data and the like) is not evaluated here
         }
+        Map<String, Object> policy = EvaluationContext.policyFacts(String.valueOf(assignment.get("id")),
+            String.valueOf(definition.get("id")), setDefinition == null ? null : String.valueOf(setDefinition.get("id")),
+            referenceId);
         Map<String, Object> parameters;
         try {
             parameters = resolveParameters(definitionProperties.get("parameters"), givenValues, valueContext);
         } catch (EvaluationException e) {
             LOG.warnf("Policy: cannot resolve parameters of %s for %s: %s", definition.get("id"), assignment.get("id"), e.getMessage());
-            parameters = givenValues;
+            out.add(new Candidate(assignment, definition, setDefinition, referenceId, givenValues, policy, "deny", enforced,
+                nonComplianceMessage(assignment, referenceId), "Parameters could not be resolved: " + e.getMessage()));
+            return;
         }
-        Map<String, Object> policy = EvaluationContext.policyFacts(String.valueOf(assignment.get("id")),
-            String.valueOf(definition.get("id")), setDefinition == null ? null : String.valueOf(setDefinition.get("id")),
-            referenceId);
         String effect = resolveEffect(assignment, definitionProperties, parameters, policy, referenceId, valueContext);
         if ("disabled".equals(effect)) {
             return;
         }
         out.add(new Candidate(assignment, definition, setDefinition, referenceId, parameters, policy, effect, enforced,
-            nonComplianceMessage(assignment, referenceId)));
+            nonComplianceMessage(assignment, referenceId), null));
     }
 
     /** Parameter values given as {@code {name: {value: ...}}} or {@code {name: value}}. */
@@ -502,6 +512,10 @@ public class PolicyEngine {
         if (!(condition instanceof Map<?, ?> ifCondition)) {
             return null;
         }
+        if (candidate.error() != null) {
+            return new Match(candidate.assignment(), candidate.definition(), candidate.setDefinition(), candidate.referenceId(),
+                candidate.effect(), candidate.enforced(), List.of(), candidate.nonComplianceMessage(), candidate.error());
+        }
         EvaluationContext ctx = base.forDefinition(candidate.parameters(), candidate.policy());
         Map<String, Object> content = base.content;
         List<Map<String, Object>> trace = new ArrayList<>();
@@ -512,9 +526,9 @@ public class PolicyEngine {
             Map<String, Object> typed = (Map<String, Object>) ifCondition;
             matched = PolicyRuleEvaluator.evaluate(typed, ctx, trace);
         } catch (EvaluationException e) {
-            // A failed evaluation is an implicit deny in Azure; other effects log and stand aside.
+            // A rule that cannot be evaluated denies the request, whatever its effect would have been.
             LOG.warnf("Policy: evaluation of %s failed for %s: %s", candidate.definition().get("id"), content.get("id"), e.getMessage());
-            matched = "deny".equals(candidate.effect());
+            matched = true;
             error = e.getMessage();
         }
         if (!matched) {

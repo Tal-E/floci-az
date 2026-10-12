@@ -119,16 +119,13 @@ final class PolicyRuleEvaluator {
         Object fieldName = ResourceFields.get(count, "field");
         if (fieldName != null) {
             String alias = ArmExpressions.stringify(ArmExpressions.evaluate(fieldName, ctx));
-            FieldValue members = ResourceFields.resolve(alias, ctx);
-            List<Object> values = members.collection() ? members.members()
-                : members.value() instanceof List<?> l ? new ArrayList<>(l) : List.of();
+            List<ResourceFields.Member> members = ResourceFields.members(alias, ctx);
             if (where == null) {
-                return values.size();
+                return members.size();
             }
-            String focusAlias = alias.toLowerCase(Locale.ROOT);
             long matched = 0;
-            for (Object member : values) {
-                ctx.push(new EvaluationContext.Binding(null, member, focusAlias));
+            for (ResourceFields.Member member : members) {
+                ctx.push(new EvaluationContext.Binding(null, member.value(), member.focus()));
                 try {
                     if (evaluate(where, ctx, trace)) {
                         matched++;

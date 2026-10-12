@@ -1,6 +1,8 @@
 package io.floci.az.services.policy.evaluation;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -19,7 +21,8 @@ import java.util.regex.Pattern;
  *
  * <p>An alias ending in, or passing through, {@code [*]} selects a collection: one value per array member,
  * flattened across nested arrays. A missing array selects an empty collection. Inside a field-count
- * {@code where}, the enumerated array contributes only the member in focus.
+ * {@code where}, each enumerated array contributes only the member in focus, so the alias selects a
+ * one-member collection, which is what {@code field()} returns in Azure.
  */
 final class ResourceFields {
 
@@ -37,7 +40,7 @@ final class ResourceFields {
         }
 
         static FieldValue collection(List<Object> members, String path) {
-            return new FieldValue(null, List.copyOf(members), true, path);
+            return new FieldValue(null, Collections.unmodifiableList(new ArrayList<>(members)), true, path);
         }
 
         /** The value a template function sees: the value itself, or the selected members as an array. */
@@ -52,6 +55,22 @@ final class ResourceFields {
             }
             return value == null ? "" : value;
         }
+    }
+
+    /** One member an array alias selects, with the enclosing array members that lead to it. */
+    record Member(Object value, Map<String, Object> focus) {
+    }
+
+    /** The members an array alias selects, each with the focus a count iteration binds for it. */
+    static List<Member> members(String alias, EvaluationContext ctx) {
+        FieldValue resolved = resolve(alias, ctx);
+        if (resolved.collection()) {
+            return resolveNodes(alias, ctx).stream().map(node -> new Member(node.value(), node.focus())).toList();
+        }
+        if (resolved.value() instanceof List<?> list) {
+            return list.stream().map(value -> new Member(value, Map.of())).toList();
+        }
+        return List.of();
     }
 
     static FieldValue resolve(String field, EvaluationContext ctx) {
@@ -106,9 +125,26 @@ final class ResourceFields {
             return selectsCollection ? FieldValue.collection(List.of(), alias) : FieldValue.single(null, alias);
         }
         String remainder = alias.substring(typeLower.length() + 1);
-        List<Object> nodes = new ArrayList<>();
-        nodes.add(ctx.content);
-        boolean collection = false;
+        List<Node> nodes = resolveNodes(alias, ctx);
+        if (selectsCollection) {
+            return FieldValue.collection(nodes.stream().map(Node::value).toList(), remainder);
+        }
+        return FieldValue.single(nodes.isEmpty() ? null : nodes.getFirst().value(), remainder);
+    }
+
+    /** A node reached while walking an alias, with the array members in focus on the way to it. */
+    private record Node(Object value, Map<String, Object> focus) {
+    }
+
+    private static List<Node> resolveNodes(String alias, EvaluationContext ctx) {
+        String lower = alias.toLowerCase(Locale.ROOT);
+        String typeLower = ctx.resourceType == null ? "" : ctx.resourceType.toLowerCase(Locale.ROOT);
+        if (typeLower.isEmpty() || !lower.startsWith(typeLower + "/")) {
+            return List.of();
+        }
+        String remainder = alias.substring(typeLower.length() + 1);
+        List<Node> nodes = new ArrayList<>();
+        nodes.add(new Node(ctx.content, Map.of()));
         StringBuilder aliasSoFar = new StringBuilder(typeLower);
         String[] tokens = remainder.split("\\.");
         for (int i = 0; i < tokens.length; i++) {
@@ -124,41 +160,42 @@ final class ResourceFields {
             }
             aliasSoFar.append(key.toLowerCase(Locale.ROOT));
             if (!key.isEmpty()) {
-                List<Object> next = new ArrayList<>(nodes.size());
-                for (Object node : nodes) {
-                    next.add(lookup(node, key));
+                List<Node> next = new ArrayList<>(nodes.size());
+                for (Node node : nodes) {
+                    next.add(new Node(lookup(node.value(), key), node.focus()));
                 }
                 nodes = next;
             }
             if (index != null) {
-                List<Object> next = new ArrayList<>(nodes.size());
-                for (Object node : nodes) {
-                    next.add(node instanceof List<?> list && index < list.size() ? list.get(index) : null);
+                List<Node> next = new ArrayList<>(nodes.size());
+                for (Node node : nodes) {
+                    Object value = node.value() instanceof List<?> list && index < list.size() ? list.get(index) : null;
+                    next.add(new Node(value, node.focus()));
                 }
                 nodes = next;
             }
             if (star) {
                 aliasSoFar.append("[*]");
                 String focusKey = aliasSoFar.toString();
+                List<Node> expanded = new ArrayList<>();
                 if (ctx.hasFocus(focusKey)) {
-                    nodes = new ArrayList<>();
-                    nodes.add(ctx.focusFor(focusKey));
+                    Object focused = ctx.focusFor(focusKey);
+                    expanded.add(new Node(focused, nodes.isEmpty() ? Map.of() : nodes.getFirst().focus()));
                 } else {
-                    collection = true;
-                    List<Object> expanded = new ArrayList<>();
-                    for (Object node : nodes) {
-                        if (node instanceof List<?> list) {
-                            expanded.addAll(list);
+                    for (Node node : nodes) {
+                        if (node.value() instanceof List<?> list) {
+                            for (Object member : list) {
+                                Map<String, Object> focus = new LinkedHashMap<>(node.focus());
+                                focus.put(focusKey, member);
+                                expanded.add(new Node(member, focus));
+                            }
                         }
                     }
-                    nodes = expanded;
                 }
+                nodes = expanded;
             }
         }
-        if (collection) {
-            return FieldValue.collection(nodes, remainder);
-        }
-        return FieldValue.single(nodes.isEmpty() ? null : nodes.getFirst(), remainder);
+        return nodes;
     }
 
     /**
