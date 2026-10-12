@@ -5,6 +5,7 @@ import io.floci.az.core.directory.AzureDirectory;
 import io.floci.az.core.directory.Subscription;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
 import java.util.Optional;
@@ -85,10 +86,15 @@ public class SubscriptionRule implements ArmRequestRule {
         if (subscription.state().allowsWrites() || READ_ONLY_METHODS.contains(call.method())) {
             return ArmVerdict.proceed();
         }
-        return ArmVerdict.respond(ArmErrors.error(READ_ONLY_STATUS, READ_ONLY_CODE,
+        return ArmVerdict.respond(readOnly(subscription));
+    }
+
+    /** The response a write on a subscription that does not allow writes receives. */
+    public static Response readOnly(Subscription subscription) {
+        return ArmErrors.error(READ_ONLY_STATUS, READ_ONLY_CODE,
             "The subscription '" + subscription.id() + "' is " + subscription.state().wireName()
                 + " and therefore marked as read only. You cannot perform any write actions on this subscription"
                 + " until it is re-enabled (its state is set under floci-az.subscriptions in the emulator's"
-                + " configuration)."));
+                + " configuration).");
     }
 }

@@ -31,6 +31,26 @@ public class ManagementGroupStore implements Resettable {
         }
     }
 
+    /** A hierarchy change the store refuses, with the ARM error it maps to. */
+    public static final class HierarchyException extends RuntimeException {
+        private final int status;
+        private final String code;
+
+        HierarchyException(int status, String code, String message) {
+            super(message);
+            this.status = status;
+            this.code = code;
+        }
+
+        public int status() {
+            return status;
+        }
+
+        public String code() {
+            return code;
+        }
+    }
+
     private final AzureDirectory directory;
     private final Map<String, Group> groups = new LinkedHashMap<>();
     private final Map<String, String> subscriptionParents = new LinkedHashMap<>();
@@ -57,14 +77,65 @@ public class ManagementGroupStore implements Resettable {
         return new ArrayList<>(groups.values());
     }
 
-    public synchronized Group put(Group group) {
-        root();
-        groups.put(key(group.name()), group);
+    /**
+     * Creates a group under {@code parentName} (the root when null) or updates its display name and parent,
+     * checking the parent and the hierarchy under the store's lock so that concurrent moves cannot form a cycle.
+     */
+    public synchronized Group createOrUpdate(String name, String displayName, String parentName) {
+        Group root = root();
+        if (name.equalsIgnoreCase(root.name())) {
+            throw new HierarchyException(400, "InvalidRequest", "The tenant root management group cannot be created or updated.");
+        }
+        String parent = checkedParent(name, parentName == null ? root.name() : parentName);
+        Group existing = groups.get(key(name));
+        Group group = new Group(name, displayName != null ? displayName : existing != null ? existing.displayName() : name,
+            root.tenantId(), parent, existing == null ? 1 : existing.version() + 1, Instant.now(), null);
+        groups.put(key(name), group);
         return group;
     }
 
-    public synchronized Optional<Group> remove(String name) {
-        return Optional.ofNullable(groups.remove(key(name)));
+    /** Moves or renames an existing group; empty when there is none by that name. */
+    public synchronized Optional<Group> move(String name, String displayName, String parentName) {
+        Group existing = groups.get(key(name));
+        if (existing == null) {
+            return Optional.empty();
+        }
+        if (existing.parent() == null) {
+            throw new HierarchyException(400, "InvalidRequest", "The tenant root management group cannot be updated.");
+        }
+        String parent = parentName == null ? existing.parent() : checkedParent(name, parentName);
+        Group group = new Group(name, displayName != null ? displayName : existing.displayName(), existing.tenantId(), parent,
+            existing.version() + 1, Instant.now(), null);
+        groups.put(key(name), group);
+        return Optional.of(group);
+    }
+
+    /** Deletes an empty group; false when there is none by that name. */
+    public synchronized boolean delete(String name) {
+        Group existing = groups.get(key(name));
+        if (existing == null) {
+            return false;
+        }
+        if (existing.parent() == null) {
+            throw new HierarchyException(400, "InvalidRequest", "The tenant root management group cannot be deleted.");
+        }
+        if (!childGroups(name).isEmpty() || !childSubscriptions(name).isEmpty()) {
+            throw new HierarchyException(409, "Conflict",
+                "The management group '" + name + "' has children and cannot be deleted. Move or delete its children first.");
+        }
+        groups.remove(key(name));
+        return true;
+    }
+
+    private String checkedParent(String name, String parentName) {
+        Group parent = groups.get(key(parentName));
+        if (parent == null) {
+            throw new HierarchyException(400, "InvalidRequest", "The parent management group '" + parentName + "' could not be found.");
+        }
+        if (isWithin(parent.name(), name)) {
+            throw new HierarchyException(400, "InvalidRequest", "A management group cannot be moved under itself or one of its descendants.");
+        }
+        return parent.name();
     }
 
     /** The groups whose parent is {@code name}, in creation order. */
@@ -78,11 +149,23 @@ public class ManagementGroupStore implements Resettable {
         return out;
     }
 
-    /** The subscriptions placed directly under {@code name}; the root also holds every unplaced subscription. */
+    /** The subscriptions of the hierarchy's tenant; other tenants have hierarchies of their own. */
+    public synchronized List<Subscription> tenantSubscriptions() {
+        String tenantId = root().tenantId();
+        List<Subscription> out = new ArrayList<>();
+        for (Subscription subscription : directory.subscriptions()) {
+            if (subscription.tenantId() == null || subscription.tenantId().equalsIgnoreCase(tenantId)) {
+                out.add(subscription);
+            }
+        }
+        return out;
+    }
+
+    /** The subscriptions placed directly under {@code name}; the root also holds every unplaced subscription of its tenant. */
     public synchronized List<Subscription> childSubscriptions(String name) {
         List<Subscription> out = new ArrayList<>();
         boolean isRoot = root().name().equalsIgnoreCase(name);
-        for (Subscription subscription : directory.subscriptions()) {
+        for (Subscription subscription : tenantSubscriptions()) {
             String parent = subscriptionParents.get(key(subscription.id()));
             if (parent == null ? isRoot : parent.equalsIgnoreCase(name)) {
                 out.add(subscription);
@@ -101,9 +184,21 @@ public class ManagementGroupStore implements Resettable {
         return subscriptionParents.containsKey(key(subscriptionId));
     }
 
-    public synchronized void place(String subscriptionId, String groupName) {
-        directory.registerOnFirstUse(subscriptionId, null);
-        subscriptionParents.put(key(subscriptionId), groupName);
+    /** Places a subscription under a group of its own tenant, registering an unknown subscription in that tenant. */
+    public synchronized Subscription place(String subscriptionId, String groupName) {
+        Group group = groups.get(key(groupName));
+        if (group == null) {
+            throw new HierarchyException(404, "NotFound", "The management group '" + groupName + "' could not be found.");
+        }
+        Optional<Subscription> known = directory.subscription(subscriptionId);
+        if (known.isPresent() && known.get().tenantId() != null && !known.get().tenantId().equalsIgnoreCase(group.tenantId())) {
+            throw new HierarchyException(400, "InvalidRequest",
+                "The subscription '" + subscriptionId + "' belongs to tenant '" + known.get().tenantId()
+                    + "' and cannot be placed in the management group hierarchy of tenant '" + group.tenantId() + "'.");
+        }
+        Subscription subscription = known.orElseGet(() -> directory.registerOnFirstUse(subscriptionId, group.tenantId()));
+        subscriptionParents.put(key(subscriptionId), group.name());
+        return subscription;
     }
 
     public synchronized boolean unplace(String subscriptionId) {
@@ -114,7 +209,7 @@ public class ManagementGroupStore implements Resettable {
     public synchronized List<Group> ancestors(String name) {
         List<Group> out = new ArrayList<>();
         Group current = groups.get(key(name));
-        while (current != null && current.parent() != null) {
+        while (current != null && current.parent() != null && out.size() <= groups.size()) {
             Group parent = groups.get(key(current.parent()));
             if (parent == null) {
                 break;
