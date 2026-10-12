@@ -198,6 +198,48 @@ class PolicyEvaluationTest {
     }
 
     @Test
+    void disabledMembersStayDisabledWhenParametersFail() {
+        definition("tls", TLS_RULE.formatted("deny"), "Secure transfer");
+        putJson(SET_DEFINITIONS + "/skipped-set", """
+                {"properties": {"policyDefinitions": [
+                    {"policyDefinitionReferenceId": "tls", "policyDefinitionId": "%s",
+                     "parameters": {"unused": {"value": "[parameters('missing')]"}}}]}}"""
+                .formatted(DEFINITIONS + "/tls"), POLICY_API).statusCode(201);
+        assign("skipped-set", SET_DEFINITIONS + "/skipped-set", """
+                "overrides": [{"kind": "policyEffect", "value": "disabled",
+                               "selectors": [{"kind": "policyDefinitionReferenceId", "in": ["tls"]}]}]""");
+
+        storageAccount("sa1", "TLS1_0").statusCode(admitted());
+    }
+
+    @Test
+    void runtimeFailuresFollowTheEnforcementMode() {
+        putJson(DEFINITIONS + "/bad-base64", """
+                {"properties": {"mode": "All",
+                  "policyRule": {"if": {"value": "[base64ToString('!')]", "equals": "never"},
+                                 "then": {"effect": "audit"}}}}""", POLICY_API).statusCode(201);
+        assign("bad-relaxed", DEFINITIONS + "/bad-base64", "\"enforcementMode\": \"DoNotEnforce\"");
+        storageAccount("sa1", "TLS1_2").statusCode(admitted());
+
+        assign("bad-enforced", DEFINITIONS + "/bad-base64", "{}");
+        storageAccount("sa2", "TLS1_2").statusCode(403)
+                .body("error.code", equalTo("RequestDisallowedByPolicy"));
+    }
+
+    @Test
+    void malformedBodiesReachTheHandlerUnchanged() {
+        putJson(DEFINITIONS + "/tag-all", """
+                {"properties": {"mode": "Indexed",
+                  "policyRule": {"if": {"field": "type", "equals": "Microsoft.Network/networkSecurityGroups"},
+                                 "then": {"effect": "append", "details": [{"field": "tags['costCenter']", "value": "cc"}]}}}}""",
+                POLICY_API).statusCode(201);
+        assign("tag-all", DEFINITIONS + "/tag-all", "{}");
+
+        nsg("broken", "{").statusCode(400);
+        nsg("array", "[]").statusCode(400);
+    }
+
+    @Test
     void appendAddsMissingValuesAndDeniesConflicts() {
         putJson(DEFINITIONS + "/tag-nsg", """
                 {"properties": {"mode": "Indexed",

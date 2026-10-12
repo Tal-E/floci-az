@@ -5,7 +5,6 @@ import io.floci.az.core.arm.ArmResourceId;
 import io.floci.az.core.directory.ResourceGroup;
 import io.floci.az.core.directory.ResourceGroups;
 import io.floci.az.services.policy.PolicyStore;
-import io.floci.az.services.policy.evaluation.ArmExpressions.EvaluationException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -149,7 +148,12 @@ public class PolicyEngine {
                         denials.add(match);
                     }
                 } else if ("append".equals(effect) && match.enforced()) {
-                    String conflict = append(candidate, base.forDefinition(candidate.parameters(), candidate.policy()));
+                    String conflict;
+                    try {
+                        conflict = append(candidate, base.forDefinition(candidate.parameters(), candidate.policy()));
+                    } catch (RuntimeException e) {
+                        conflict = "The append details could not be applied: " + e.getMessage();
+                    }
                     if (conflict != null) {
                         match = new Match(match.assignment(), match.definition(), match.setDefinition(), match.referenceId(),
                             "deny", true, match.trace(), match.nonComplianceMessage(), conflict);
@@ -364,8 +368,12 @@ public class PolicyEngine {
         Map<String, Object> parameters;
         try {
             parameters = resolveParameters(definitionProperties.get("parameters"), givenValues, valueContext);
-        } catch (EvaluationException e) {
+        } catch (RuntimeException e) {
             LOG.warnf("Policy: cannot resolve parameters of %s for %s: %s", definition.get("id"), assignment.get("id"), e.getMessage());
+            // A member an override disables stays disabled even when its parameters cannot be resolved.
+            if ("disabled".equals(resolveEffect(assignment, definitionProperties, givenValues, policy, referenceId, null))) {
+                return;
+            }
             out.add(new Candidate(assignment, definition, setDefinition, referenceId, givenValues, policy, "deny", enforced,
                 nonComplianceMessage(assignment, referenceId), "Parameters could not be resolved: " + e.getMessage()));
             return;
@@ -446,7 +454,7 @@ public class PolicyEngine {
                 : new EvaluationContext(Map.of(), null, null, null, Map.of(), null, Map.of()).forDefinition(parameters, policy);
             try {
                 effect = ArmExpressions.evaluate(text, ctx);
-            } catch (EvaluationException e) {
+            } catch (RuntimeException e) {
                 LOG.warnf("Policy: cannot resolve the effect '%s': %s", text, e.getMessage());
                 return "deny";
             }
@@ -525,7 +533,7 @@ public class PolicyEngine {
             @SuppressWarnings("unchecked")
             Map<String, Object> typed = (Map<String, Object>) ifCondition;
             matched = PolicyRuleEvaluator.evaluate(typed, ctx, trace);
-        } catch (EvaluationException e) {
+        } catch (RuntimeException e) {
             // A rule that cannot be evaluated denies the request, whatever its effect would have been.
             LOG.warnf("Policy: evaluation of %s failed for %s: %s", candidate.definition().get("id"), content.get("id"), e.getMessage());
             matched = true;

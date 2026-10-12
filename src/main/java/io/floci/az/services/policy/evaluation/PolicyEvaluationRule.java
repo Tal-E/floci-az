@@ -82,7 +82,10 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         }
         Map<String, Object> content = call.body().json();
         if (content == null) {
-            content = Map.of(); // empty, or not a JSON object: evaluated as the empty content a lenient handler accepts
+            if (!call.body().isEmpty()) {
+                return ArmVerdict.proceed(); // malformed or not a JSON object: the handler rejects it unchanged
+            }
+            content = Map.of(); // an empty body is evaluated as the empty content a lenient handler accepts
         }
         AzureRequest request = call.request();
         Map<String, Object> identity = identity(request);
