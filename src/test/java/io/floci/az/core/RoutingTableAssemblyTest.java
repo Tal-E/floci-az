@@ -88,6 +88,7 @@ class RoutingTableAssemblyTest {
         Map.entry("/providers/Microsoft.ManagedIdentity/", "managedidentity"),
         Map.entry("/providers/Microsoft.Authorization/", "policy"),
         Map.entry("/providers/Microsoft.ResourceGraph/", "resourcegraph"),
+        Map.entry("/providers/Microsoft.PolicyInsights/", "policyinsights"),
         Map.entry("/providers/Microsoft.ContainerService/", "aks"),
         Map.entry("/providers/Microsoft.ContainerRegistry/", "acr"),
         Map.entry("/providers/Microsoft.ContainerInstance/", "aci"),

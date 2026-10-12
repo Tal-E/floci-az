@@ -193,7 +193,8 @@ public class BannerLogger {
         sb.append(String.format("   %-9s [%s]  %s\n", "policy",
                 config.services().policy().enabled() ? "enabled " : "disabled",
                 "Microsoft.Authorization policy (definitions, set definitions, assignments, exemptions"
-                        + (config.services().policy().enforcement() ? ", rule evaluation on writes)" : ", no evaluation)")));
+                        + (config.services().policy().enforcement() ? ", rule evaluation on writes" : ", no evaluation")
+                        + (config.services().policy().insights() ? ", PolicyInsights compliance)" : ")")));
         sb.append(String.format("   %-9s [%s]  %s\n", "graph-rg",
                 config.services().resourceGraph().enabled() ? "enabled " : "disabled",
                 "Microsoft.ResourceGraph (KQL queries over resources, resource containers, policy resources)"));
