@@ -87,7 +87,7 @@ final class PolicyDenial {
         info.put("policyAssignmentName", denial.assignment().get("name"));
         info.put("policyAssignmentDisplayName", assignmentProperties.get("displayName"));
         info.put("policyAssignmentScope", assignmentProperties.get("scope"));
-        info.put("policyAssignmentParameters", assignmentProperties.getOrDefault("parameters", Map.of()));
+        info.put("policyAssignmentParameters", PolicyEngine.parameterValues(assignmentProperties.get("parameters")));
         if (denial.setDefinition() != null) {
             info.put("policySetDefinitionId", denial.setDefinition().get("id"));
             info.put("policySetDefinitionName", denial.setDefinition().get("name"));
@@ -95,6 +95,7 @@ final class PolicyDenial {
             info.put("policyDefinitionReferenceId", denial.referenceId());
         }
         info.put("policyExemptionIds", List.of());
+        info.put("policyEnrollmentIds", List.of());
         Map<String, Object> violation = new LinkedHashMap<>();
         violation.put("type", "PolicyViolation");
         violation.put("info", info);

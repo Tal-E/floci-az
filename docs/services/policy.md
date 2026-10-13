@@ -169,7 +169,11 @@ resource "azurerm_resource_group_policy_assignment" "enforce" {
 
 Every PUT and PATCH of a provider resource or a resource group passes through the ARM request gate,
 where the assigned policies are evaluated before the handler runs, the way Azure evaluates them before
-a request reaches its resource provider:
+a request reaches its resource provider. A PATCH is judged on the resource it produces: the stored
+resource (read through its own GET) with the patch applied the way Resource Manager applies one,
+`properties` merged and `tags` replaced as a whole. A tag update on a compliant resource therefore
+passes, and a PATCH that drops a required tag or sets a forbidden property is refused. When an
+`append` fires on a PATCH, only the delta reaches the handler, so it still receives a PATCH.
 
 1. The assignments whose scope covers the resource are collected: the resource itself, its parents,
    its resource group, its subscription and any management group. `notScopes` and `resourceSelectors`
@@ -246,7 +250,8 @@ floci-az:
   `denyAction`, `auditIfNotExists`, `deployIfNotExists`, `manual`, `mutate` and the resource-provider
   modes (`Microsoft.Kubernetes.Data` and the like) evaluate to nothing. There is no compliance scan of
   existing resources and `Microsoft.PolicyInsights` (policy states, remediations, compliance summaries)
-  is not implemented. A PATCH is evaluated on the body it carries, not on the merged resource.
+  is not implemented. A PATCH of a resource that cannot be read back (none stored, or a handler that
+  answers something other than 200) is evaluated on the body it carries.
 - **Management-group assignments apply to every subscription.** The emulator has no management-group
   hierarchy, so an assignment at `Microsoft.Management/managementGroups/{mg}` covers all subscriptions.
 - **`Indexed` mode is approximated** as top-level provider resources: nested child types, extension

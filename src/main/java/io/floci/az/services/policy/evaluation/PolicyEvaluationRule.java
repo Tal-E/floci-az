@@ -2,6 +2,7 @@ package io.floci.az.services.policy.evaluation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.az.config.EmulatorConfig;
+import io.floci.az.core.ArmRouter;
 import io.floci.az.core.AzureRequest;
 import io.floci.az.core.arm.ArmCall;
 import io.floci.az.core.arm.ArmErrors;
@@ -10,6 +11,7 @@ import io.floci.az.core.arm.ArmVerdict;
 import io.floci.az.services.policy.evaluation.PolicyEngine.Match;
 import io.floci.az.services.policy.evaluation.PolicyEngine.Outcome;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
@@ -46,6 +48,7 @@ public class PolicyEvaluationRule implements ArmRequestRule {
 
     private final PolicyEngine engine;
     private final PolicyEvaluationLog log;
+    private final Instance<ArmRouter> router;
     private final boolean enabled;
 
     /** The audit matches of admitted requests, recorded on exit when the handler has answered with a 2xx. */
@@ -55,13 +58,15 @@ public class PolicyEvaluationRule implements ArmRequestRule {
     }
 
     @Inject
-    public PolicyEvaluationRule(PolicyEngine engine, PolicyEvaluationLog log, EmulatorConfig config) {
-        this(engine, log, config.services().policy().enabled() && config.services().policy().enforcement());
+    public PolicyEvaluationRule(PolicyEngine engine, PolicyEvaluationLog log, Instance<ArmRouter> router,
+                                EmulatorConfig config) {
+        this(engine, log, router, config.services().policy().enabled() && config.services().policy().enforcement());
     }
 
-    PolicyEvaluationRule(PolicyEngine engine, PolicyEvaluationLog log, boolean enabled) {
+    PolicyEvaluationRule(PolicyEngine engine, PolicyEvaluationLog log, Instance<ArmRouter> router, boolean enabled) {
         this.engine = engine;
         this.log = log;
+        this.router = router;
         this.enabled = enabled;
     }
 
@@ -88,10 +93,13 @@ public class PolicyEvaluationRule implements ArmRequestRule {
             content = Map.of(); // an empty body is evaluated as the empty content a lenient handler accepts
         }
         AzureRequest request = call.request();
+        // A PATCH is judged on the resource it produces: the stored resource with the patch applied.
+        Map<String, Object> stored = "PATCH".equals(call.method()) ? storedResource(call) : null;
+        Map<String, Object> evaluated = stored == null ? new LinkedHashMap<>(content) : PatchMerge.apply(stored, content);
         Map<String, Object> identity = identity(request);
         String caller = caller(identity);
         String correlationId = header(request, "x-ms-correlation-request-id");
-        PolicyEngine.Request evaluation = new PolicyEngine.Request(call, new LinkedHashMap<>(content),
+        PolicyEngine.Request evaluation = new PolicyEngine.Request(call, evaluated,
             request == null ? null : request.queryParams().get("api-version"), identity);
         Outcome outcome;
         try {
@@ -111,7 +119,8 @@ public class PolicyEvaluationRule implements ArmRequestRule {
             return ArmVerdict.respond(PolicyDenial.response(name, outcome.denials()));
         }
         if (outcome.contentChanged()) {
-            call.body().replace(evaluation.content());
+            // An append on a PATCH writes only the delta, so the handler still receives a PATCH.
+            call.body().replace(stored == null ? evaluation.content() : PatchMerge.diff(stored, evaluation.content()));
         }
         List<Match> appends = outcome.matches().stream()
             .filter(m -> "append".equals(m.effect()) && m.enforced()).toList();
@@ -157,6 +166,38 @@ public class PolicyEvaluationRule implements ArmRequestRule {
      * The identity claims {@code requestContext().identity} exposes, read from the bearer token without
      * verifying it: {@code idtyp}, {@code appid}, {@code oid} and the object-identifier claim Azure adds.
      */
+    /** The resource a PATCH updates, as its own GET answers it; null when there is none or it cannot be read. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> storedResource(ArmCall call) {
+        AzureRequest request = call.request();
+        if (request == null || router == null || router.isUnsatisfied()) {
+            return null;
+        }
+        Map<String, String> query = new LinkedHashMap<>();
+        String apiVersion = request.queryParams() == null ? null : request.queryParams().get("api-version");
+        if (apiVersion != null) {
+            query.put("api-version", apiVersion);
+        }
+        try {
+            Response current = router.get().dispatchInternal("GET", call.id().id(), query, request);
+            if (current.getStatus() != 200) {
+                return null;
+            }
+            Object entity = current.getEntity();
+            if (entity instanceof Map<?, ?> map) {
+                return (Map<String, Object>) map;
+            }
+            if (entity instanceof String text) {
+                Object parsed = MAPPER.readValue(text, Object.class);
+                return parsed instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
+            }
+            return entity == null ? null : MAPPER.convertValue(entity, Map.class);
+        } catch (RuntimeException | IOException e) {
+            LOG.debugf(e, "Policy: the stored resource %s could not be read; the PATCH is evaluated on its body", call.id().id());
+            return null;
+        }
+    }
+
     static Map<String, Object> identity(AzureRequest request) {
         Map<String, Object> identity = new LinkedHashMap<>();
         String authorization = header(request, "Authorization");

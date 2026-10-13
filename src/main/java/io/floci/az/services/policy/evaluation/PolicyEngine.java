@@ -27,7 +27,8 @@ import java.util.Set;
  * <p>Deviations from Azure, all documented on the policy service page: a management-group assignment applies
  * to every subscription because the emulator has no management-group hierarchy; a definition referenced by
  * a built-in id is skipped because built-ins are not seeded; {@code Indexed} mode is approximated as
- * "top-level provider resources"; a PATCH is evaluated on its own body rather than the merged resource;
+ * "top-level provider resources"; a PATCH is evaluated on the stored resource with the patch applied
+ * ({@code properties} merged, {@code tags} replaced), or on its own body when the resource cannot be read;
  * {@code modify}, {@code denyAction}, {@code auditIfNotExists}, {@code deployIfNotExists}, {@code manual}
  * and the resource-provider modes evaluate to nothing.
  */
@@ -387,7 +388,7 @@ public class PolicyEngine {
     }
 
     /** Parameter values given as {@code {name: {value: ...}}} or {@code {name: value}}. */
-    private static Map<String, Object> parameterValues(Object raw) {
+    static Map<String, Object> parameterValues(Object raw) {
         Map<String, Object> values = new LinkedHashMap<>();
         if (raw instanceof Map<?, ?> map) {
             for (Map.Entry<?, ?> entry : map.entrySet()) {

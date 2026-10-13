@@ -13,6 +13,7 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 
 @QuarkusTest
@@ -111,7 +112,11 @@ class PolicyEvaluationTest {
                 "\"parameters\": {\"allowedLocations\": {\"value\": [\"West US\"]}, \"effect\": {\"value\": \"Deny\"}}");
 
         storageAccount("saeast", "TLS1_2", "eastus").statusCode(403)
-                .body("error.additionalInfo[0].info.policyAssignmentParameters.allowedLocations.value[0]", equalTo("West US"))
+                // Azure flattens the assignment's {name: {value}} parameters in the violation.
+                .body("error.additionalInfo[0].info.policyAssignmentParameters.allowedLocations[0]", equalTo("West US"))
+                .body("error.additionalInfo[0].info.policyAssignmentParameters.effect", equalTo("Deny"))
+                .body("error.additionalInfo[0].info.policyExemptionIds", hasSize(0))
+                .body("error.additionalInfo[0].info.policyEnrollmentIds", hasSize(0))
                 .body("error.additionalInfo[0].info.evaluationDetails.evaluatedExpressions[0].targetValue[0]", equalTo("West US"));
         storageAccount("sawest", "TLS1_2", "westus").statusCode(admitted());
     }
@@ -409,10 +414,13 @@ class PolicyEvaluationTest {
         given().contentType("application/json").body("{\"properties\": {}}")
                 .when().put(RG_SCOPE + "/providers/Microsoft.Storage/storageAccounts/tagged/blobServices/default/containers/c1" + STORAGE_API)
                 .then().statusCode(admitted());
-        // A PATCH is evaluated on what it carries.
+        // A PATCH replaces the tags, so one that drops env is refused; one that keeps it is not.
         given().contentType("application/json").body("{\"tags\": {\"owner\": \"me\"}}")
                 .when().patch(RG_SCOPE + "/providers/Microsoft.Storage/storageAccounts/tagged" + STORAGE_API)
                 .then().statusCode(403);
+        given().contentType("application/json").body("{\"tags\": {\"env\": \"dev\", \"owner\": \"me\"}}")
+                .when().patch(RG_SCOPE + "/providers/Microsoft.Storage/storageAccounts/tagged" + STORAGE_API)
+                .then().statusCode(not(equalTo(403)));
     }
 
     @Test
