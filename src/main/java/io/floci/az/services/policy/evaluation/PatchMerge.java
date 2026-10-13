@@ -1,6 +1,8 @@
 package io.floci.az.services.policy.evaluation;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -14,10 +16,10 @@ final class PatchMerge {
     private PatchMerge() {
     }
 
-    /** The resource {@code patch} produces from {@code stored}. */
+    /** The resource {@code patch} produces from {@code stored}, as a writable deep copy sharing nothing with either. */
     static Map<String, Object> apply(Map<String, Object> stored, Map<String, Object> patch) {
-        Map<String, Object> merged = new LinkedHashMap<>(stored);
-        for (Map.Entry<String, Object> entry : patch.entrySet()) {
+        Map<String, Object> merged = copy(stored);
+        for (Map.Entry<String, Object> entry : copy(patch).entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
             if (value == null) {
@@ -33,8 +35,50 @@ final class PatchMerge {
     }
 
     /**
-     * The PATCH that turns {@code stored} into {@code after}: what the original PATCH changed plus whatever an
-     * append wrote, in the same shape {@link #apply} reads ({@code tags} whole, {@code properties} as a merge).
+     * The original {@code patch} plus what the policies changed between {@code before} (the resource the patch
+     * alone produces) and {@code after}: the caller's values are kept as supplied, amendments are merged in, and
+     * {@code tags} travel whole when an amendment touched them, since a PATCH replaces them.
+     */
+    static Map<String, Object> amend(Map<String, Object> patch, Map<String, Object> before, Map<String, Object> after) {
+        Map<String, Object> amendments = diff(before, after);
+        if (amendments.isEmpty()) {
+            return patch;
+        }
+        Map<String, Object> amended = copy(patch);
+        for (Map.Entry<String, Object> entry : amendments.entrySet()) {
+            String key = entry.getKey();
+            if (key.equalsIgnoreCase("tags")) {
+                amended.put(key, copy(after.get(key)));
+            } else if (entry.getValue() instanceof Map<?, ?> change && amended.get(key) instanceof Map<?, ?> given) {
+                amended.put(key, mergeObjects(given, change));
+            } else {
+                amended.put(key, entry.getValue());
+            }
+        }
+        return amended;
+    }
+
+    /** A deep copy of JSON-shaped content: maps and lists are copied, scalars shared. */
+    @SuppressWarnings("unchecked")
+    static <T> T copy(T value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((key, member) -> out.put(String.valueOf(key), copy(member)));
+            return (T) out;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> out = new ArrayList<>(list.size());
+            for (Object member : list) {
+                out.add(copy(member));
+            }
+            return (T) out;
+        }
+        return value;
+    }
+
+    /**
+     * The PATCH that turns {@code stored} into {@code after}, in the shape {@link #apply} reads ({@code tags}
+     * whole, {@code properties} as a merge).
      */
     static Map<String, Object> diff(Map<String, Object> stored, Map<String, Object> after) {
         Map<String, Object> patch = new LinkedHashMap<>();

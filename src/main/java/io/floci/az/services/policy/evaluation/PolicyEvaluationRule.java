@@ -95,7 +95,8 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         AzureRequest request = call.request();
         // A PATCH is judged on the resource it produces: the stored resource with the patch applied.
         Map<String, Object> stored = "PATCH".equals(call.method()) ? storedResource(call) : null;
-        Map<String, Object> evaluated = stored == null ? new LinkedHashMap<>(content) : PatchMerge.apply(stored, content);
+        Map<String, Object> evaluated = stored == null ? PatchMerge.copy(content) : PatchMerge.apply(stored, content);
+        Map<String, Object> beforePolicies = stored == null ? null : PatchMerge.copy(evaluated);
         Map<String, Object> identity = identity(request);
         String caller = caller(identity);
         String correlationId = header(request, "x-ms-correlation-request-id");
@@ -120,7 +121,8 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         }
         if (outcome.contentChanged()) {
             // An append on a PATCH writes only the delta, so the handler still receives a PATCH.
-            call.body().replace(stored == null ? evaluation.content() : PatchMerge.diff(stored, evaluation.content()));
+            call.body().replace(stored == null ? evaluation.content()
+                : PatchMerge.amend(content, beforePolicies, evaluation.content()));
         }
         List<Match> appends = outcome.matches().stream()
             .filter(m -> "append".equals(m.effect()) && m.enforced()).toList();

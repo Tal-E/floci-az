@@ -251,7 +251,9 @@ floci-az:
   modes (`Microsoft.Kubernetes.Data` and the like) evaluate to nothing. There is no compliance scan of
   existing resources and `Microsoft.PolicyInsights` (policy states, remediations, compliance summaries)
   is not implemented. A PATCH of a resource that cannot be read back (none stored, or a handler that
-  answers something other than 200) is evaluated on the body it carries.
+  answers something other than 200) is evaluated on the body it carries, and the merge is generic:
+  a provider that replaces a nested collection on PATCH (a Redis cache's `redisConfiguration`, say)
+  stores less than the policy saw when the patch supplies only part of it.
 - **Management-group assignments apply to every subscription.** The emulator has no management-group
   hierarchy, so an assignment at `Microsoft.Management/managementGroups/{mg}` covers all subscriptions.
 - **`Indexed` mode is approximated** as top-level provider resources: nested child types, extension

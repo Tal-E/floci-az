@@ -88,6 +88,38 @@ class PolicyPatchEvaluationTest {
                 .body("tags.owner", equalTo("team"))
                 .body("tags.costCenter", equalTo(RG))
                 .body("properties.minimumTlsVersion", equalTo("1.2"));
+        // What the caller supplied travels as supplied, unchanged members included, with the amendment added.
+        patch("{\"tags\": {\"owner\": \"other\"}, \"properties\": {\"redisConfiguration\": {\"maxmemory-policy\": \"allkeys-lru\", \"maxmemory-reserved\": \"2\"}}}")
+                .statusCode(200)
+                .body("tags.owner", equalTo("other"))
+                .body("tags.costCenter", equalTo(RG))
+                .body("properties.redisConfiguration.maxmemory-policy", equalTo("allkeys-lru"))
+                .body("properties.redisConfiguration.maxmemory-reserved", equalTo("2"));
+        patch("{\"properties\": {\"redisConfiguration\": {\"maxmemory-policy\": \"allkeys-lru\", \"maxmemory-reserved\": \"4\"}}}")
+                .statusCode(200)
+                .body("properties.redisConfiguration.maxmemory-policy", equalTo("allkeys-lru"))
+                .body("properties.redisConfiguration.maxmemory-reserved", equalTo("4"));
+    }
+
+    @Test
+    void anAppendOnAResourceGroupPatchAmendsItsTags() {
+        given().contentType("application/json").body("""
+                {"properties": {"mode": "All",
+                  "policyRule": {"if": {"field": "type", "equals": "Microsoft.Resources/subscriptions/resourceGroups"},
+                                 "then": {"effect": "append", "details": [{"field": "tags['costCenter']", "value": "shared"}]}}}}""")
+                .when().put(DEFINITIONS + "/rg-cost" + POLICY_API).then().statusCode(201);
+        given().contentType("application/json")
+                .body("{\"properties\": {\"policyDefinitionId\": \"" + DEFINITIONS + "/rg-cost\"}}")
+                .when().put(SUB_SCOPE + AUTH + "/policyAssignments/rg-cost" + POLICY_API).then().statusCode(201);
+
+        String group = SUB_SCOPE + "/resourceGroups/costed-rg?api-version=2021-04-01";
+        given().contentType("application/json").body("{\"location\": \"eastus\"}")
+                .when().put(group).then().statusCode(isOneOf(200, 201)).body("tags.costCenter", equalTo("shared"));
+        // The stored tags are read back as an unmodifiable map; the append still lands in the PATCH.
+        given().contentType("application/json").body("{\"tags\": {\"owner\": \"team\"}}")
+                .when().patch(group).then().statusCode(200)
+                .body("tags.owner", equalTo("team"))
+                .body("tags.costCenter", equalTo("shared"));
     }
 
     @Test
