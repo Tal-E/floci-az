@@ -101,7 +101,8 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         String caller = caller(identity);
         String correlationId = header(request, "x-ms-correlation-request-id");
         PolicyEngine.Request evaluation = new PolicyEngine.Request(call, evaluated,
-            request == null ? null : request.queryParams().get("api-version"), identity);
+            request == null ? null : request.queryParams().get("api-version"), identity,
+            "PATCH".equals(call.method()) && changesOnlyTags(content));
         Outcome outcome;
         try {
             outcome = engine.evaluate(evaluation);
@@ -120,7 +121,7 @@ public class PolicyEvaluationRule implements ArmRequestRule {
             return ArmVerdict.respond(PolicyDenial.response(name, outcome.denials()));
         }
         if (outcome.contentChanged()) {
-            // An append on a PATCH writes only the delta, so the handler still receives a PATCH.
+            // An append on a PATCH amends the caller's patch, so the handler still receives a PATCH.
             call.body().replace(stored == null ? evaluation.content()
                 : PatchMerge.amend(content, beforePolicies, evaluation.content()));
         }
@@ -162,12 +163,11 @@ public class PolicyEvaluationRule implements ArmRequestRule {
             match.nonComplianceMessage(), match.trace());
     }
 
-    // ── Caller identity ─────────────────────────────────────────────────────────
+    /** A PATCH body that changes nothing but {@code tags}. */
+    static boolean changesOnlyTags(Map<String, Object> patch) {
+        return !patch.isEmpty() && patch.keySet().stream().allMatch(key -> key.equalsIgnoreCase("tags"));
+    }
 
-    /**
-     * The identity claims {@code requestContext().identity} exposes, read from the bearer token without
-     * verifying it: {@code idtyp}, {@code appid}, {@code oid} and the object-identifier claim Azure adds.
-     */
     /** The resource a PATCH updates, as its own GET answers it; null when there is none or it cannot be read. */
     @SuppressWarnings("unchecked")
     private Map<String, Object> storedResource(ArmCall call) {
@@ -200,6 +200,12 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         }
     }
 
+    // ── Caller identity ─────────────────────────────────────────────────────────
+
+    /**
+     * The identity claims {@code requestContext().identity} exposes, read from the bearer token without
+     * verifying it: {@code idtyp}, {@code appid}, {@code oid} and the object-identifier claim Azure adds.
+     */
     static Map<String, Object> identity(AzureRequest request) {
         Map<String, Object> identity = new LinkedHashMap<>();
         String authorization = header(request, "Authorization");

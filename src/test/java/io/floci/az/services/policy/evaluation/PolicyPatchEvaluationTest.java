@@ -75,15 +75,56 @@ class PolicyPatchEvaluationTest {
     }
 
     @Test
-    void anAppendOnAPatchWritesOnlyTheDelta() {
+    void aTagsOnlyPatchSkipsPoliciesThatDoNotInspectTags() {
+        // Created before the deny was assigned, so the stored cache already breaks it.
+        cache("{\"location\": \"eastus\", \"properties\": {\"minimumTlsVersion\": \"1.0\", "
+                + "\"sku\": {\"name\": \"Basic\", \"family\": \"C\", \"capacity\": 0}}}").statusCode(isOneOf(200, 201));
+        definition("tls", """
+                {"if": {"allOf": [
+                    {"field": "type", "equals": "Microsoft.Cache/Redis"},
+                    {"field": "Microsoft.Cache/Redis/minimumTlsVersion", "notEquals": "1.2"}]},
+                 "then": {"effect": "deny"}}""");
+        assign("tls", DEFINITIONS + "/tls");
+
+        // A PATCH of only tags is evaluated against tag policies alone: the TLS rule does not run.
+        patch("{\"tags\": {\"owner\": \"team\"}}").statusCode(200).body("tags.owner", equalTo("team"));
+        // Any other change is evaluated in full, on the stored resource with the patch applied.
+        patch("{\"tags\": {\"owner\": \"other\"}, \"properties\": {\"redisConfiguration\": {\"maxmemory-reserved\": \"2\"}}}")
+                .statusCode(403).body("error.code", equalTo("RequestDisallowedByPolicy"));
+    }
+
+    @Test
+    void aTagsOnlyPatchIsEvaluatedAgainstAParameterisedTagField() {
+        given().contentType("application/json").body("""
+                {"properties": {"mode": "Indexed",
+                  "parameters": {"tagName": {"type": "String"}},
+                  "policyRule": {"if": {"field": "[concat('tags[', parameters('tagName'), ']')]", "exists": "false"},
+                                 "then": {"effect": "deny"}}}}""")
+                .when().put(DEFINITIONS + "/require-tag" + POLICY_API).then().statusCode(201);
+        given().contentType("application/json")
+                .body("{\"properties\": {\"policyDefinitionId\": \"" + DEFINITIONS + "/require-tag\", "
+                        + "\"parameters\": {\"tagName\": {\"value\": \"owner\"}}}}")
+                .when().put(ASSIGNMENTS + "/require-tag" + POLICY_API).then().statusCode(201);
+
+        cache("{\"location\": \"eastus\", \"tags\": {\"owner\": \"team\"}, \"properties\": {\"minimumTlsVersion\": \"1.2\", "
+                + "\"sku\": {\"name\": \"Basic\", \"family\": \"C\", \"capacity\": 0}}}").statusCode(isOneOf(200, 201));
+        patch("{\"tags\": {\"env\": \"dev\"}}").statusCode(403);
+        patch("{\"tags\": {\"owner\": \"team\", \"env\": \"dev\"}}").statusCode(200).body("tags.env", equalTo("dev"));
+    }
+
+    @Test
+    void anAppendOnAPatchAmendsTheCallersPatch() {
+        // The condition inspects the tag, as Azure's tag-append definitions do, so a tags-only PATCH evaluates it.
         definition("cost-center", """
-                {"if": {"field": "type", "equals": "Microsoft.Cache/Redis"},
+                {"if": {"allOf": [
+                    {"field": "type", "equals": "Microsoft.Cache/Redis"},
+                    {"field": "tags['costCenter']", "exists": "false"}]},
                  "then": {"effect": "append", "details": [{"field": "tags['costCenter']", "value": "[resourceGroup().name]"}]}}""");
         assign("cost-center", DEFINITIONS + "/cost-center");
 
         cache(CACHE_BODY).statusCode(isOneOf(200, 201)).body("tags.costCenter", equalTo(RG));
 
-        // The PATCH replaces the tags; the append puts the tag back into the delta the handler receives.
+        // The PATCH replaces the tags; the append puts the tag back into the patch the handler receives.
         patch("{\"tags\": {\"owner\": \"team\"}}").statusCode(200)
                 .body("tags.owner", equalTo("team"))
                 .body("tags.costCenter", equalTo(RG))
@@ -105,7 +146,9 @@ class PolicyPatchEvaluationTest {
     void anAppendOnAResourceGroupPatchAmendsItsTags() {
         given().contentType("application/json").body("""
                 {"properties": {"mode": "All",
-                  "policyRule": {"if": {"field": "type", "equals": "Microsoft.Resources/subscriptions/resourceGroups"},
+                  "policyRule": {"if": {"allOf": [
+                                   {"field": "type", "equals": "Microsoft.Resources/subscriptions/resourceGroups"},
+                                   {"field": "tags['costCenter']", "exists": "false"}]},
                                  "then": {"effect": "append", "details": [{"field": "tags['costCenter']", "value": "shared"}]}}}}""")
                 .when().put(DEFINITIONS + "/rg-cost" + POLICY_API).then().statusCode(201);
         given().contentType("application/json")

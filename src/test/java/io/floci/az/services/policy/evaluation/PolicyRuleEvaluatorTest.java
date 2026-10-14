@@ -165,4 +165,27 @@ class PolicyRuleEvaluatorTest {
         assertEquals("westeurope", trace.get(0).get("expressionValue"));
         assertEquals("NotIn", trace.get(0).get("operator"));
     }
+
+    @Test
+    void inspectsTagsFindsTagsFieldsAnywhereInTheCondition() {
+        EvaluationContext ctx = nsg();
+        ctx.parameters = Map.of("tagName", "costCenter", "property", "location");
+        assertTrue(inspectsTags("{\"field\": \"tags['env']\", \"exists\": \"false\"}", ctx));
+        assertTrue(inspectsTags("{\"allOf\": [{\"field\": \"type\", \"equals\": \"x\"}, {\"not\": {\"field\": \"tags.env\", \"equals\": \"a\"}}]}", ctx));
+        assertTrue(inspectsTags("{\"field\": \"tags\", \"containsKey\": \"env\"}", ctx));
+        assertTrue(inspectsTags("{\"field\": \"[concat('tags[', parameters('tagName'), ']')]\", \"exists\": \"false\"}", ctx));
+        assertTrue(inspectsTags("{\"value\": \"[length(field('tags'))]\", \"less\": 2}", ctx));
+        assertTrue(inspectsTags("{\"count\": {\"field\": \"tags[*]\"}, \"equals\": 0}", ctx));
+        assertFalse(inspectsTags("{\"allOf\": [{\"field\": \"type\", \"equals\": \"x\"}, {\"field\": \"location\", \"notIn\": [\"tags\"]}]}", ctx));
+        assertFalse(inspectsTags("{\"field\": \"[parameters('property')]\", \"equals\": \"eastus\"}", ctx));
+        assertFalse(inspectsTags("{\"value\": \"[resourceGroup().tags]\", \"exists\": \"true\"}", ctx));
+    }
+
+    private static boolean inspectsTags(String condition, EvaluationContext ctx) {
+        try {
+            return PolicyRuleEvaluator.inspectsTags(MAPPER.readValue(condition, Map.class), ctx);
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException(e);
+        }
+    }
 }

@@ -99,6 +99,49 @@ final class PolicyRuleEvaluator {
         throw new EvaluationException("A condition must have a field, value or count");
     }
 
+    private static final Pattern TAGS_FIELD_CALL = Pattern.compile("field\\s*\\(\\s*'tags\\b", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * True when {@code condition} inspects a tags field anywhere: a {@code field} (or {@code count.field}) naming
+     * {@code tags}, {@code tags.name}, {@code tags['name']} or {@code tags[*]}, evaluated against the definition's
+     * parameters when it is an expression, or a {@code field('tags...')} call inside any expression. A field
+     * expression that cannot be evaluated counts when its text mentions tags.
+     */
+    static boolean inspectsTags(Object condition, EvaluationContext ctx) {
+        if (condition instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if ("field".equalsIgnoreCase(String.valueOf(entry.getKey())) && entry.getValue() != null
+                        && isTagsField(entry.getValue(), ctx)) {
+                    return true;
+                }
+                if (inspectsTags(entry.getValue(), ctx)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (condition instanceof List<?> list) {
+            for (Object member : list) {
+                if (inspectsTags(member, ctx)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return condition instanceof String text && text.trim().startsWith("[") && TAGS_FIELD_CALL.matcher(text).find();
+    }
+
+    private static boolean isTagsField(Object fieldName, EvaluationContext ctx) {
+        String field;
+        try {
+            field = ArmExpressions.stringify(ArmExpressions.evaluate(fieldName, ctx));
+        } catch (RuntimeException e) {
+            return String.valueOf(fieldName).toLowerCase(Locale.ROOT).contains("tags");
+        }
+        String name = field == null ? "" : field.trim().toLowerCase(Locale.ROOT);
+        return name.equals("tags") || name.startsWith("tags.") || name.startsWith("tags[");
+    }
+
     /** The {@code location} field compares normalised on both sides: {@code East US 2} equals {@code eastus2}. */
     private static Object normalizeLocations(Object target) {
         if (target instanceof String s) {

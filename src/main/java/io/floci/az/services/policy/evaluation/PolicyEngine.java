@@ -29,6 +29,7 @@ import java.util.Set;
  * a built-in id is skipped because built-ins are not seeded; {@code Indexed} mode is approximated as
  * "top-level provider resources"; a PATCH is evaluated on the stored resource with the patch applied
  * ({@code properties} merged, {@code tags} replaced), or on its own body when the resource cannot be read;
+ * a PATCH that changes only {@code tags} is evaluated against the definitions whose condition inspects tags;
  * {@code modify}, {@code denyAction}, {@code auditIfNotExists}, {@code deployIfNotExists}, {@code manual}
  * and the resource-provider modes evaluate to nothing.
  */
@@ -40,8 +41,14 @@ public class PolicyEngine {
     private static final String MANAGEMENT_GROUPS = "providers/microsoft.management/managementgroups/";
     private static final String RESOURCE_GROUP_TYPE = "Microsoft.Resources/subscriptions/resourceGroups";
 
-    /** Request-time facts the rule hands the engine. */
-    public record Request(ArmCall call, Map<String, Object> content, String apiVersion, Map<String, Object> identity) {
+    /**
+     * Request-time facts the rule hands the engine.
+     *
+     * @param tagsOnly a PATCH whose body changes only {@code tags}: Azure then evaluates only the definitions
+     *                 whose condition inspects a tags field
+     */
+    public record Request(ArmCall call, Map<String, Object> content, String apiVersion, Map<String, Object> identity,
+                          boolean tagsOnly) {
     }
 
     /**
@@ -134,7 +141,8 @@ public class PolicyEngine {
                     case "audit" -> effect.equals("audit");
                     default -> !Set.of("append", "deny", "audit", "disabled").contains(effect);
                 };
-                if (!inPhase || isExempt(candidate, resourceKey, content, resourceType)) {
+                if (!inPhase || isExempt(candidate, resourceKey, content, resourceType)
+                        || (request.tagsOnly() && !inspectsTags(candidate, base))) {
                     continue;
                 }
                 Match match = evaluateCandidate(candidate, base);
@@ -545,6 +553,13 @@ public class PolicyEngine {
         }
         return new Match(candidate.assignment(), candidate.definition(), candidate.setDefinition(), candidate.referenceId(),
             candidate.effect(), candidate.enforced(), trace, candidate.nonComplianceMessage(), error);
+    }
+
+    /** True when the candidate's {@code if} condition inspects a tags field, its parameters resolved. */
+    private static boolean inspectsTags(Candidate candidate, EvaluationContext base) {
+        Object rule = properties(candidate.definition()).get("policyRule");
+        Object condition = rule instanceof Map<?, ?> r ? ResourceFields.get(r, "if") : null;
+        return PolicyRuleEvaluator.inspectsTags(condition, base.forDefinition(candidate.parameters(), candidate.policy()));
     }
 
     /** {@code Indexed} mode covers resource types that take tags and a location: top-level provider resources. */

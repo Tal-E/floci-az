@@ -172,8 +172,12 @@ where the assigned policies are evaluated before the handler runs, the way Azure
 a request reaches its resource provider. A PATCH is judged on the resource it produces: the stored
 resource (read through its own GET) with the patch applied the way Resource Manager applies one,
 `properties` merged and `tags` replaced as a whole. A tag update on a compliant resource therefore
-passes, and a PATCH that drops a required tag or sets a forbidden property is refused. When an
-`append` fires on a PATCH, only the delta reaches the handler, so it still receives a PATCH.
+passes, and a PATCH that drops a required tag or sets a forbidden property is refused. As in Azure, a
+PATCH that changes only `tags` is evaluated only against the definitions whose condition inspects a
+tags field (`tags`, `tags.name`, `tags['name']`, a parameterised field resolving to one, or
+`field('tags...')` in an expression), so a tag update never trips a rule about other properties. When
+an `append` fires on a PATCH, its amendments are added to the caller's patch, so the handler still
+receives a PATCH.
 
 1. The assignments whose scope covers the resource are collected: the resource itself, its parents,
    its resource group, its subscription and any management group. `notScopes` and `resourceSelectors`
