@@ -100,7 +100,7 @@ services:
 | `FLOCI_AZ_SERVICES_EVENT_HUB_ENTITIES` | `eh1:4` | Comma-separated `name:partitions` pairs |
 | `FLOCI_AZ_SERVICES_EVENT_HUB_AMQP_PORT` | `5672` | Host port for AMQP (Artemis) |
 | `FLOCI_AZ_SERVICES_EVENT_HUB_KAFKA_ENABLED` | `false` | Enable Kafka-compatible endpoint |
-| `FLOCI_AZ_SERVICES_EVENT_HUB_KAFKA_PORT` | `9093` | Host port for Kafka (Redpanda) |
+| `FLOCI_AZ_SERVICES_EVENT_HUB_KAFKA_PORT` | `9093` | Host port for Kafka (Redpanda). Redpanda advertises it on `localhost`, or on the Docker daemon's host with `FLOCI_AZ_DOCKER_ENDPOINT_MODE=published` |
 | `FLOCI_AZ_SERVICES_EVENT_HUB_ARTEMIS_IMAGE` | `apache/activemq-artemis:2.44.0` | Artemis image; must match the Artemis version floci-az was built against, because the patched AMQP jars it copies in are version-specific |
 | `FLOCI_AZ_SERVICES_EVENT_HUB_REDPANDA_IMAGE` | `redpandadata/redpanda:latest` | Redpanda image |
 
@@ -161,6 +161,8 @@ curl http://localhost:4577/devstoreaccount1-eventhub/namespaces/myns/connection
 }
 ```
 
+`amqpEndpoint` and `amqpsEndpoint` name `localhost`, or the Docker daemon's host in published endpoint mode (`floci-az.docker.endpoint-mode=published`). The broker certificate covers both.
+
 Connect with the Python SDK using the dynamically allocated port:
 
 ```python
@@ -185,7 +187,7 @@ producer = EventHubProducerClient.from_connection_string(
 GET /{account}-eventhub/health
 ```
 
-Returns `200` when the default namespace AMQP broker is reachable, `503` otherwise:
+Returns `200` when a namespace's AMQP broker is reachable, `503` otherwise. The probe goes to the broker where floci-az reaches it (the default namespace's broker when one is running): `localhost` when floci-az runs on the host, the broker container's IP when floci-az itself runs in a container, the Docker daemon's host with `FLOCI_AZ_DOCKER_ENDPOINT_MODE=published`. With no broker running it probes the configured ports on `localhost`. The `port` fields report the configured ports:
 
 ```json
 {"amqp":{"port":5672,"status":"up"},"amqps":{"port":5671,"status":"up"},"kafka":{"enabled":false}}

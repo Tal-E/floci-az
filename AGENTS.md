@@ -48,7 +48,7 @@ Critical rules:
 floci-az follows a layered design:
 
 - **AzureRoutingFilter**: pre-matching JAX-RS filter; extracts account name and service type from the request path; dispatches to the correct `AzureServiceHandler`
-- **AzureServiceHandler**: interface implemented by each service (`getServiceType()`, `canHandle()`, `handle()`)
+- **AzureServiceHandler**: interface implemented by each service (`getServiceType()`, `handle()`)
 - **AzureServiceRegistry**: CDI registry of all handlers; checks `isEnabled()` per service
 - **Service Handler**: parses Azure protocol input, contains business logic, produces Azure-compatible responses
 - **StorageBackend**: pluggable persistence (memory / persistent / hybrid / wal)
@@ -259,6 +259,9 @@ Guidelines:
 - Prefer SDK clients over raw HTTP for all validation
 - Use `make test-<service>` to run a specific suite
 - Use `make compat-docker` to run all suites against a running container
+- `compat-terraform` and `compat-opentofu` must declare the same `resource` blocks in `main.tf`.
+  CI checks it with `.github/ci/compat-iac-drift-check.py`; add a new resource to both suites, or
+  list it in the matching `.github/ci/compat-iac-allowlist-*.txt` with the reason
 
 ### Suites that do not run in CI
 
@@ -277,7 +280,9 @@ embedded and run in-process, so they need no Docker and are cheap to run locally
 consequence either way is that a regression in a Cosmos engine or in the SQL data plane merges
 green. When you change either, run the suite locally and say so in the PR.
 
-A suite reporting `Tests run: 0` is a self-skip, never a pass.
+A suite reporting `Tests run: 0` is a self-skip, never a pass. CI and the Makefile's Docker suite
+targets enforce this with `.github/ci/compat-test-count-check.py`, which fails a suite whose JUnit
+reports show no executed test (CI also applies a per-suite floor, `min_tests` in the matrix).
 
 ### Keeping the Makefile and CI in sync
 
@@ -332,6 +337,12 @@ Emulator container (6th `COMPAT_SESSION` argument ↔ `emulator_env`):
 | `sdk-test-dotnet` | `-e FLOCI_AZ_SERVICES_SERVICE_BUS_MOCKED=false` (`SERVICEBUS_EMULATOR_ENV`) | ✓ |
 | `sdk-test-python` | `-e FLOCI_AZ_SERVICES_SERVICE_BUS_MOCKED=false` (`SERVICEBUS_EMULATOR_ENV`) | ✓ |
 | `sdk-test-node` | `-e FLOCI_AZ_SERVICES_SERVICE_BUS_MOCKED=false` (`SERVICEBUS_EMULATOR_ENV`) | ✓ |
+| every suite, parity legs only | `-e FLOCI_AZ_PARITY=azure` (`PARITY_EMULATOR_ENV`, from `PARITY=azure`) | ✓ (`matrix.parity`, scheduled and manual runs only) |
+
+The parity legs run every suite against an emulator started at `floci-az.parity=azure`. In CI
+they are the `parity` matrix axis, which is empty on pull requests and `azure` on the scheduled and
+manually dispatched runs, so an opt-in behaviour cannot fail a PR. Locally, add `PARITY=azure` to any
+Docker compat target (`make test-terraform-compat PARITY=azure`, `make test-azcli PARITY=azure`).
 
 The container name follows the pattern `floci-az-<service>-<namespace>` (e.g. `floci-az-servicebus-default`). If a new sidecar-based service is added, its container name and port must be added to both places.
 

@@ -82,7 +82,7 @@ docker run -d --name floci-az \
   floci/floci-az:latest
 ```
 
-All services are available at `http://localhost:4577`. Use any account name and key: in `dev` auth mode credentials are not validated.
+All services are available at `http://localhost:4577`. Use any account name and key: SharedKey credentials are not validated.
 
 > **Azure Functions** requires access to the Docker socket so Floci AZ can spawn runtime containers on demand. Mount `/var/run/docker.sock` as shown above. If you don't use Functions, the socket mount is optional.
 
@@ -726,9 +726,11 @@ All settings are overridable via environment variables (`FLOCI_AZ_` prefix).
 | `FLOCI_AZ_BASE_URL` | `http://localhost:4577` | Base URL used when the emulator returns service URLs |
 | `FLOCI_AZ_HOSTNAME` | Unset | Hostname added to returned URLs and TLS cert SANs when running inside Docker Compose |
 | `FLOCI_AZ_TLS_ENABLED` | `false` | Enable HTTP+HTTPS on the same port via protocol-sniffing proxy |
+| `FLOCI_AZ_PARITY` | `compat` | How closely the ARM platform answers follow Azure: `compat` keeps every response as floci-az has always given it, `azure` gives Azure's answers (resource-group update and cascading delete, listed subscriptions), `strict` adds Azure's refusals (unknown subscription or resource group). See the [ARM docs](docs/services/arm.md#parity-levels) |
 | `FLOCI_AZ_STORAGE_MODE` | `memory` | Storage mode: `memory`, `persistent`, `hybrid`, or `wal` |
 | `FLOCI_AZ_STORAGE_PATH` | `/app/data` | Directory used for persisted state |
 | `FLOCI_AZ_DOCKER_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker socket used to spawn function and sidecar containers |
+| `FLOCI_AZ_DOCKER_ENDPOINT_MODE` | `auto` | How sidecar containers are addressed: `auto` (container name or IP and internal port inside Docker, `localhost` and the published port otherwise) or `published` (the Docker daemon's host and the published port, for remote daemons such as docker-in-docker or kubedock) |
 | `FLOCI_AZ_DOCKER_RESOURCE_NAMESPACE` | _(unset)_ | Namespace inserted into the name of every container and volume floci-az creates (`floci-az-<ns>-...`) and added as the `floci_namespace` label, so parallel emulator instances on one Docker host don't collide |
 
 Per-service enable flags (`FLOCI_AZ_SERVICES_<SERVICE>_ENABLED`), TLS certificate paths, Cosmos engine settings, and the rest are documented in the full reference.

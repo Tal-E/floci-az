@@ -106,7 +106,7 @@ Default endpoint: `http://localhost:4577/devstoreaccount1-cosmos`
     ```
 
 > [!TIP]
-> In `dev` auth mode (the default) any key is accepted: the well-known Cosmos DB emulator key above works out of the box with all SDKs.
+> Any key is accepted: the well-known Cosmos DB emulator key above works out of the box with all SDKs.
 
 > [!NOTE]
 > **Port difference by SDK:** The **Java SDK** enforces TLS in gateway mode and cannot use plain HTTP, so it connects
@@ -453,6 +453,9 @@ curl http://localhost:4577/devstoreaccount1-cosmos-mongo/connect
 
 > Do not publish engine ports (`27017`, `5432`, etc.) on the `floci-az` service. Engines are launched as
 > sibling containers by the host Docker daemon, so they bind ports directly on the host.
+
+With `FLOCI_AZ_DOCKER_ENDPOINT_MODE=published` (a remote Docker daemon), `host` and the connection string
+name the Docker daemon's host and the engine's published port instead of `localhost`.
 
 ### Embedded engines: NoSQL and Table API (no Docker)
 

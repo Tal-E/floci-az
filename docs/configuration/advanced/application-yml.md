@@ -91,6 +91,8 @@ floci-az:
   services:
     blob:
       enabled: true
+      # Comma-separated accounts with hierarchical namespace (ADLS Gen2) enabled by default
+      hierarchical-namespace-accounts: devstoreaccount1
     queue:
       enabled: true
     table:
@@ -121,10 +123,10 @@ floci-az:
 | `FLOCI_AZ_PARITY` | `compat` | Azure parity level: `compat`, `azure` or `strict`; the default for every `parity-overrides` key |
 | `FLOCI_AZ_PARITY_OVERRIDES_SUBSCRIPTION_LISTING` | _(on from `azure`)_ | List subscriptions registered on first use, and echo the directory's subscription id |
 | `FLOCI_AZ_PARITY_OVERRIDES_STRICT_SUBSCRIPTIONS` | _(on from `strict`)_ | Refuse unknown subscriptions with `404 SubscriptionNotFound` |
-| `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_SEMANTICS` | _(on from `azure`)_ | Resource-group re-PUT answers `200`, a missing group is `404 ResourceGroupNotFound`, a resource PUT creates a missing group, and groups persist in the directory store |
-| `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_DELETE` | _(on from `azure`)_ | Resource-group `DELETE` is a `202` long-running operation that deletes every resource in the group |
-| `FLOCI_AZ_PARITY_OVERRIDES_STRICT_RESOURCE_GROUPS` | _(on from `strict`)_ | Refuse a request for a resource under a missing group with `404 ResourceGroupNotFound` |
-| `FLOCI_AZ_CLOUD_DEFAULT` | `AzureCloud` | Cloud of the default tenant |
+| `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_SEMANTICS` | _(on from `azure`)_ | Resource-group re-PUT answers `200`, a resource PUT creates a missing group, and groups persist in the directory store |
+| `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_DELETE` | _(on from `azure`)_ | Resource-group `DELETE` is a `202` long-running operation that deletes every resource in the group; a write into a group being deleted is `409`, and `/resources` also lists Monitor, Event Grid and Email resources |
+| `FLOCI_AZ_PARITY_OVERRIDES_STRICT_RESOURCE_GROUPS` | _(on from `strict`)_ | Refuse a request for a resource under a missing group with `404 ResourceGroupNotFound`; groups persist in the directory store |
+| `FLOCI_AZ_CLOUD_DEFAULT` | `AzureCloud` | Cloud of the default tenant. Endpoints, issuers and DNS suffixes stay the public cloud's for now |
 | `FLOCI_AZ_STORAGE_MODE` | `memory` | Global storage mode |
 | `FLOCI_AZ_STORAGE_PATH` | `/app/data` | Persistence directory |
 | `FLOCI_AZ_STORAGE_SERVICES_BLOB_MODE` | _(global)_ | Per-service blob mode |
@@ -135,10 +137,12 @@ floci-az:
 | `FLOCI_AZ_STORAGE_SERVICES_DIRECTORY_MODE` | _(global)_ | Per-service mode of the ARM tenant and subscription directory |
 | `FLOCI_AZ_SERVICES_FUNCTIONS_EPHEMERAL` | `false` | Fresh container per invocation |
 | `FLOCI_AZ_SERVICES_FUNCTIONS_CONTAINER_IDLE_TIMEOUT_SECONDS` | `300` | Evict warm containers idle longer than this (seconds); `0` disables eviction |
+| `FLOCI_AZ_SERVICES_BLOB_HIERARCHICAL_NAMESPACE_ACCOUNTS` | `devstoreaccount1` | Comma-separated accounts with hierarchical namespace enabled by default |
 | `FLOCI_AZ_SERVICES_APP_CONFIG_ENABLED` | `true` | Enable/disable App Configuration |
 | `FLOCI_AZ_SERVICES_CONTAINER_APPS_MOCKED` | `true` | Keep Container Apps ARM state without Docker runtimes |
 | `FLOCI_AZ_SERVICES_FUNCTIONS_CODE_PATH` | `~/.floci-az/functions` | Function code directory |
 | `FLOCI_AZ_DOCKER_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon socket |
+| `FLOCI_AZ_DOCKER_ENDPOINT_MODE` | `auto` | How sidecar containers are addressed: `auto` (container name or IP and internal port inside Docker, `localhost` and the published port otherwise) or `published` (the Docker daemon's host and the published port, for remote daemons such as docker-in-docker or kubedock) |
 | `FLOCI_AZ_DOCKER_RESOURCE_NAMESPACE` | _(unset)_ | Namespace inserted into the name of every container and volume floci-az creates (`floci-az-<ns>-...`) and added as the `floci_namespace` label, so parallel emulator instances on one Docker host don't collide |
 
 `auth.mode` is not read by any service today. Setting it to `strict` does not turn on SharedKey

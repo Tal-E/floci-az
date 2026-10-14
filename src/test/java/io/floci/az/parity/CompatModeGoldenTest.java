@@ -130,6 +130,8 @@ class CompatModeGoldenTest {
             "PUT", rg + "/providers/Microsoft.KeyVault/vaults/" + VAULT + KV_API);
         script.step("storage account delete", given(), "DELETE", account + STORAGE_API);
         script.step("resource group delete", given(), "DELETE", rg + RG_API);
+        // Fix (missing-group code): main answered 404 ResourceNotFound with its own message; Azure answers
+        // 404 ResourceGroupNotFound, "Resource group '<name>' could not be found.". Same status.
         script.step("resource group get after delete", given(), "GET", rg + RG_API);
         script.step("resource group head after delete", given(), "HEAD", rg + RG_API);
         script.finish();
@@ -138,6 +140,9 @@ class CompatModeGoldenTest {
     @Test
     void entraIdentityPlatform() {
         Script script = new Script("entra");
+        // Fix (discovery over-advertising): main listed the refresh_token and device_code grants, offline_access,
+        // device_authorization_endpoint, userinfo_endpoint, the id_token response types and form_post, none of
+        // which the token service serves. Discovery now lists only what is registered.
         script.step("discovery, tenant v2.0", given(), "GET",
             "/" + DEFAULT_TENANT + "/v2.0/.well-known/openid-configuration");
         script.step("discovery, common v2.0", given(), "GET", "/common/v2.0/.well-known/openid-configuration");

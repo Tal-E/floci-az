@@ -136,9 +136,6 @@ public class RedisHandler implements AzureServiceHandler, Resettable, ResourceIn
     }
 
     @Override
-    public boolean canHandle(AzureRequest req) { return "redis".equals(req.serviceType()); }
-
-    @Override
     public Response handle(AzureRequest req) {
         String fullPath = req.resourcePath();
         String method = req.method();
@@ -228,7 +225,10 @@ public class RedisHandler implements AzureServiceHandler, Resettable, ResourceIn
                 cache.setSkuFamily(sku.path("family").asText("C"));
                 cache.setSkuCapacity(sku.path("capacity").asInt(0));
                 cache.setRedisVersion("7.0");
-                cache.setEnableNonSslPort(props.path("enableNonSslPort").asBoolean(true));
+                // With TLS served, absent means false, the spec default; without it, true, because
+                // the plain port is then the only one served. The plain port is served either way.
+                cache.setEnableNonSslPort(props.path("enableNonSslPort")
+                        .asBoolean(!config.services().redis().tlsEnabled()));
                 cache.setMinimumTlsVersion(props.path("minimumTlsVersion").asText("1.2"));
                 cache.setRedisConfiguration(parseStringMap(props.path("redisConfiguration")));
                 cache.setTags(parseStringMap(body.path("tags")));
@@ -257,6 +257,7 @@ public class RedisHandler implements AzureServiceHandler, Resettable, ResourceIn
                     current.setContainerId(started.getContainerId());
                     current.setHostName(started.getHostName());
                     current.setPort(started.getPort());
+                    current.setSslPort(started.getSslPort());
                     current.setInternalEndpoint(started.getInternalEndpoint());
                     if ("Failed".equals(started.getProvisioningState())) {
                         current.setProvisioningState("Failed");

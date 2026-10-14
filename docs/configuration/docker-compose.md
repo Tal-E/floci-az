@@ -150,6 +150,18 @@ services:
 Once the sidecars start, their ports are available on the host: `localhost:27017` (MongoDB),
 `localhost:5432` (PostgreSQL), `localhost:5672` (AMQP / Artemis).
 
+### Sidecars and Docker networks
+
+Docker Compose puts its services on a user-defined network, where containers resolve each other by name. A plain `docker run` without `--network` puts floci-az on Docker's default `bridge` network instead, which does not resolve container names. floci-az still reaches its sidecars there by container IP, so Redis caches, container registries and database servers finish provisioning, but the host names it reports for Redis, PostgreSQL, MySQL, MariaDB and SQL Server are container names that clients on the default bridge cannot resolve. floci-az logs a warning at startup in that case. Use a user-defined network:
+
+```bash
+docker network create floci-net
+docker run -d --name floci-az --network floci-net -p 4577:4577 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e FLOCI_AZ_SERVICES_DOCKER_NETWORK=floci-net \
+  floci/floci-az:latest
+```
+
 ### With the Azure CLI inside the container
 
 Use the `latest-compat` image when your scripts need Azure tooling inside the container. It includes the Azure CLI and `azfloci`. Call `azfloci` to target the local emulator without passing a connection string; plain `az` still needs explicit connection settings. See [Docker Images](docker-images.md) for what the compat image contains.
@@ -216,9 +228,9 @@ All variables are optional; the default applies when unset.
 | `FLOCI_AZ_PARITY` | `compat` | Azure parity level. `compat`: responses stay as floci-az has always answered them. `azure`: every parity override on. `strict`: `azure` plus Azure's refusals. See the [ARM page](../services/arm.md#parity-levels) |
 | `FLOCI_AZ_PARITY_OVERRIDES_SUBSCRIPTION_LISTING` | _(on from `azure`)_ | `true`: `GET /subscriptions` also lists subscriptions registered on first use, and a subscription is echoed with the directory's id |
 | `FLOCI_AZ_PARITY_OVERRIDES_STRICT_SUBSCRIPTIONS` | _(on from `strict`)_ | `true`: an unknown subscription is `404 SubscriptionNotFound`; `false`: it is registered on first use |
-| `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_SEMANTICS` | _(on from `azure`)_ | `true`: a resource-group re-PUT answers `200`, a missing group is `404 ResourceGroupNotFound`, a resource PUT under a missing group creates the group, and groups persist in the directory store |
+| `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_SEMANTICS` | _(on from `azure`)_ | `true`: a resource-group re-PUT answers `200`, a resource PUT under a missing group creates the group, and groups persist in the directory store |
 | `FLOCI_AZ_PARITY_OVERRIDES_RESOURCE_GROUP_DELETE` | _(on from `azure`)_ | `true`: a resource-group `DELETE` deletes every resource in the group and answers `202` with a `Location` to poll; `false`: `200`, only the group is removed |
-| `FLOCI_AZ_PARITY_OVERRIDES_STRICT_RESOURCE_GROUPS` | _(on from `strict`)_ | `true`: a request for a resource under a group that does not exist is `404 ResourceGroupNotFound` |
+| `FLOCI_AZ_PARITY_OVERRIDES_STRICT_RESOURCE_GROUPS` | _(on from `strict`)_ | `true`: a request for a resource under a group that does not exist is `404 ResourceGroupNotFound`, and groups persist in the directory store |
 | `FLOCI_AZ_CLOUD_DEFAULT` | `AzureCloud` | Cloud of the default tenant: `AzureCloud`, `AzureUSGovernment` or `AzureChinaCloud` |
 
 ### Storage
@@ -280,6 +292,7 @@ All variables are optional; the default applies when unset.
 |---|---|---|
 | `FLOCI_AZ_DOCKER_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon socket, unix socket or `tcp://host:port` |
 | `FLOCI_AZ_DOCKER_ENDPOINT_MODE` | `auto` | How sidecar containers are addressed, by floci-az and in the host/port reported to clients. `auto`: container name/IP and internal port when floci-az runs in a container, `localhost` and the published port otherwise. `published`: always the Docker daemon's host (from `docker-host`) and the published port. Use it for remote daemons such as docker-in-docker or kubedock, whose containers aren't directly reachable |
+| `FLOCI_AZ_SERVICES_DOCKER_NETWORK` | _(detected)_ | Docker network sidecar containers join. Defaults to the network floci-az itself runs on, preferring a user-defined one. On the default `bridge` network floci-az reaches sidecars by container IP |
 | `FLOCI_AZ_DOCKER_LOG_MAX_SIZE` | `10m` | Max log file size per function container |
 | `FLOCI_AZ_DOCKER_LOG_MAX_FILE` | `3` | Max rotated log files per function container |
 | `FLOCI_AZ_DOCKER_DOCKER_CONFIG_PATH` | _(unset)_ | Path to Docker `config.json` for private registry auth |
@@ -325,7 +338,10 @@ If you don't need Functions, omit the socket mount and set `FLOCI_AZ_SERVICES_FU
 
 ## Health Check
 
-floci-az exposes a health endpoint you can use in `depends_on` conditions:
+The published image ships its own probe, `/usr/local/bin/healthcheck.sh`, and declares it as the image
+`HEALTHCHECK`, so `depends_on` with `condition: service_healthy` works without a `healthcheck:` block.
+The image has neither `curl` nor `wget`, so an override that calls either never passes. To tune the
+timings, point the override at the same script:
 
 ```yaml
 services:
@@ -334,16 +350,30 @@ services:
     ports:
       - "4577:4577"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4577/health"]
+      test: ["CMD", "healthcheck.sh"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
   my-app:
     depends_on:
       floci-az:
         condition: service_healthy
 ```
+
+The script sends `GET /_floci/health` and passes on a `200`. The endpoint answers:
+
+```json
+{"status": "UP", "version": "0.14.0", "edition": "floci-az-always-free"}
+```
+
+| Field | Meaning |
+|---|---|
+| `status` | `UP`, or `DOWN` with a `503` and a `problems` map when a service reports a problem |
+| `version` | The floci-az release the image was built from (`FLOCI_AZ_VERSION`), or `dev` for a local build |
+| `edition` | Always `floci-az-always-free` |
+
+`GET /health` returns the same body. See [Emulator Endpoints](endpoints.md) for the other control-plane paths, including `POST /_admin/reset`.
 
 `/ready` is the readiness probe: it answers `503` with `{"status":"DOWN"}` until every service has finished
 its startup work (for example Service Bus `start-on-boot` or eager Cosmos engines) and again once shutdown
