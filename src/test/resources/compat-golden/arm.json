@@ -1722,6 +1722,17 @@
           "resourceType" : "workspaces"
         } ]
       }, {
+        "id" : "/subscriptions/c0a7c0a7-0000-4000-8000-000000000001/providers/Microsoft.PolicyInsights",
+        "namespace" : "Microsoft.PolicyInsights",
+        "registrationPolicy" : "RegistrationRequired",
+        "registrationState" : "Registered",
+        "resourceTypes" : [ {
+          "apiVersions" : [ "2024-10-01" ],
+          "capabilities" : "None",
+          "locations" : [ ],
+          "resourceType" : "policyMetadata"
+        } ]
+      }, {
         "id" : "/subscriptions/c0a7c0a7-0000-4000-8000-000000000001/providers/Microsoft.ResourceGraph",
         "namespace" : "Microsoft.ResourceGraph",
         "registrationPolicy" : "RegistrationRequired",
