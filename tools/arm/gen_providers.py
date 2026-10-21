@@ -59,6 +59,7 @@ NAMESPACES = [
     "Microsoft.ManagedIdentity",
     "Microsoft.Network",
     "Microsoft.OperationalInsights",
+    "Microsoft.PolicyInsights",
     "Microsoft.ResourceGraph",
     "Microsoft.Resources",
     "Microsoft.Sql",
