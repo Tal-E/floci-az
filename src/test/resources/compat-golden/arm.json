@@ -1540,6 +1540,27 @@
           "resourceType" : "userAssignedIdentities/federatedIdentityCredentials"
         } ]
       }, {
+        "id" : "/subscriptions/c0a7c0a7-0000-4000-8000-000000000001/providers/Microsoft.Management",
+        "namespace" : "Microsoft.Management",
+        "registrationPolicy" : "RegistrationRequired",
+        "registrationState" : "Registered",
+        "resourceTypes" : [ {
+          "apiVersions" : [ "2024-02-01-preview", "2023-04-01", "2021-04-01", "2020-10-01", "2020-05-01", "2020-02-01", "2019-11-01", "2018-03-01-preview", "2018-01-01-preview", "2017-11-01-preview" ],
+          "capabilities" : "None",
+          "locations" : [ ],
+          "resourceType" : "managementGroups"
+        }, {
+          "apiVersions" : [ "2024-02-01-preview", "2023-04-01", "2021-04-01", "2020-10-01", "2020-05-01", "2020-02-01" ],
+          "capabilities" : "None",
+          "locations" : [ ],
+          "resourceType" : "managementGroups/settings"
+        }, {
+          "apiVersions" : [ "2024-02-01-preview", "2023-04-01", "2021-04-01", "2020-10-01", "2020-05-01", "2020-02-01", "2019-11-01", "2018-03-01-preview", "2018-01-01-preview", "2017-11-01-preview" ],
+          "capabilities" : "None",
+          "locations" : [ ],
+          "resourceType" : "managementGroups/subscriptions"
+        } ]
+      }, {
         "id" : "/subscriptions/c0a7c0a7-0000-4000-8000-000000000001/providers/Microsoft.Network",
         "namespace" : "Microsoft.Network",
         "registrationPolicy" : "RegistrationRequired",
