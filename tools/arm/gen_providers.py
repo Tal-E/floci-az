@@ -57,6 +57,7 @@ NAMESPACES = [
     "Microsoft.Insights",
     "Microsoft.KeyVault",
     "Microsoft.ManagedIdentity",
+    "Microsoft.Management",
     "Microsoft.Network",
     "Microsoft.OperationalInsights",
     "Microsoft.PolicyInsights",
