@@ -142,6 +142,40 @@ class ManagementGroupTest {
     }
 
     @Test
+    void aDeleteAddressedToOneGroupLeavesAPlacementUnderAnotherAlone() {
+        group("a", "A", null).statusCode(200);
+        group("b", "B", null).statusCode(200);
+        given().when().put(BASE + "/managementGroups/a/subscriptions/" + SUB + API).then().statusCode(200);
+        // Moved to b before the delete addressed to a arrives: the delete finds no placement under a and
+        // changes nothing, since the membership check and the removal are one store step.
+        given().when().put(BASE + "/managementGroups/b/subscriptions/" + SUB + API).then().statusCode(200);
+        given().when().delete(BASE + "/managementGroups/a/subscriptions/" + SUB + API).then().statusCode(204);
+        given().when().get(BASE + "/managementGroups/b/subscriptions/" + SUB + API).then().statusCode(200)
+                .body("properties.parent.id", equalTo(BASE + "/managementGroups/b"));
+        given().when().delete(BASE + "/managementGroups/b/subscriptions/" + SUB + API).then().statusCode(200);
+        given().when().get(ROOT + API + "&$expand=children")
+                .then().statusCode(200)
+                .body("properties.children.name", hasItem(SUB));
+    }
+
+    @Test
+    void aChildPathUnderASubscriptionIsNotAResource() {
+        group("prod", "Production", null).statusCode(200);
+        given().when().put(BASE + "/managementGroups/prod/subscriptions/" + SUB + "/unsupported" + API)
+                .then().statusCode(404).body("error.code", equalTo("InvalidResourceType"));
+        given().when().get(BASE + "/managementGroups/prod/subscriptions/" + SUB + "/unsupported" + API)
+                .then().statusCode(404).body("error.code", equalTo("InvalidResourceType"));
+        given().when().put(BASE + "/managementGroups/prod/subscriptions/" + API)
+                .then().statusCode(404).body("error.code", equalTo("InvalidResourceType"));
+        // Nothing was registered under the bogus id.
+        given().when().get("/subscriptions?api-version=2022-12-01")
+                .then().statusCode(200)
+                .body("value.subscriptionId", not(hasItem(SUB + "/unsupported")));
+        given().when().get(BASE + "/managementGroups/prod/subscriptions" + API)
+                .then().statusCode(200).body("value", hasSize(0));
+    }
+
+    @Test
     void entitiesNameAvailabilityAndOperations() {
         group("prod", "Production", null).statusCode(200);
         given().when().put(BASE + "/managementGroups/prod/subscriptions/" + SUB + API).then().statusCode(200);

@@ -15,11 +15,18 @@ subscriptions placed in them.
 - **Tenant root group**: every tenant has one, named after the tenant id with the display name
   `Tenant Root Group`; it cannot be created, updated or deleted. A subscription that was never placed
   belongs to it, as in Azure.
+- **One hierarchy per tenant**: under tenant scoping (on from `parity: azure`) the caller's token tenant
+  picks the hierarchy, the way it picks the subscriptions `GET /subscriptions` lists: each configured
+  tenant has its own root group, groups and subscriptions, and a subscription cannot be placed in
+  another tenant's hierarchy. A token naming no configured tenant works on the default tenant's.
 - **Groups**: CreateOrUpdate (`PUT`, with `properties.details.parent.id`; the root when omitted), Get
   with `$expand=children` (plus `$recurse=true`), `$expand=path` and `$expand=ancestors`, Update
   (`PATCH` of `displayName` and `parentGroupId`), Delete (an empty group only), List, `descendants`.
 - **Subscriptions**: `GET` / `PUT` / `DELETE` `managementGroups/{group}/subscriptions/{subscriptionId}`
   and the `subscriptions` listing; placing a subscription registers it with the emulator's directory.
+  A `DELETE` removes the placement only while the subscription is still under that group (`200`), and
+  answers `204` otherwise, so it never undoes a move to another group. Anything below
+  `subscriptions/{subscriptionId}` is not a resource type and answers `404 InvalidResourceType`.
 - **Entities**: `POST /providers/Microsoft.Management/getEntities` with the parent chains, descendant and
   child counts, narrowed by `groupName`.
 - **Also served**: `checkNameAvailability`, `operations`, the `settings/default` resource and the tenant
