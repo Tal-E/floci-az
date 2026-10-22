@@ -165,6 +165,7 @@ public class PolicyEngine {
                     continue;
                 }
                 Match match = evaluateCandidate(candidate, base);
+                int verdict = evaluations.size();
                 evaluations.add(evaluation(candidate, match != null, false));
                 if (match == null) {
                     continue;
@@ -188,7 +189,9 @@ public class PolicyEngine {
                             "deny", true, match.trace(), match.nonComplianceMessage(), conflict);
                         denials.add(match);
                     } else {
+                        // The resource now carries what the append asked for: its recorded verdict is compliant.
                         changed = true;
+                        evaluations.set(verdict, evaluation(candidate, false, false));
                     }
                 } else if ("deny".equals(effect) && match.enforced()) {
                     denials.add(match);

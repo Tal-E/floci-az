@@ -249,17 +249,27 @@ records come first; `$orderby=timestamp asc` reverses that. `$filter` accepts `e
 `policyDefinitionId`, `policyDefinitionName`, `policySetDefinitionId`, `policyDefinitionReferenceId`,
 `policyDefinitionAction`, `resourceType`, `resourceLocation`, `resourceGroup`, `resourceId` and
 `subscriptionId`; `$select` trims the records; `$top` pages with an `@odata.nextLink` carrying
-`$skiptoken`. An unsupported clause answers `400 InvalidQueryFilter`. The scope narrows the result the
-way Azure's does: a subscription, resource group or resource covers itself and everything below, an
-assignment, definition or set definition covers the states it produced.
+`$skiptoken`. An unsupported clause answers `400 InvalidQueryFilter`, a malformed or negative
+`$skiptoken` answers `400 InvalidQueryOption`. The scope narrows the result the way Azure's does: a
+subscription, resource group or resource covers itself and everything below, an assignment, definition
+or set definition covers the states it produced. The query and summary paths work under any resource,
+whatever provider serves it: the last `providers/` segment picks Policy Insights.
+
+A tags-only `PATCH` is evaluated against the definitions that inspect tags, so the verdicts of the
+other definitions stay as they were; any other write replaces every record of the resource. An
+enforced `append` that applied leaves the resource compliant with that definition, since the resource
+now carries what the append asked for.
 
 `policyStates/latest/summarize` answers the `SummarizeResults` shape: counts of non-compliant
 resources and policies, `resourceDetails` and `policyDetails` by compliance state, and one entry per
-assignment with its definitions and their effects.
+assignment with its definitions and their effects. A resource counts once, under its overall state:
+non-compliant when any policy finds it so, otherwise compliant, otherwise exempt.
 
 `policyStates/latest/triggerEvaluation` at subscription or resource-group scope re-evaluates every
 resource group and resource there against the current assignments, synchronously, and answers the way
-Azure does: `202 Accepted` with a `Location` header naming an `asyncOperationResults` operation that
+Azure does. Each resource is read in full from its own handler first (the generic index entry carries
+no `properties`), with the newest api-version its type declares; a resource that cannot be read keeps
+its stored verdicts. It answers `202 Accepted` with a `Location` header naming an `asyncOperationResults` operation that
 reads as `Succeeded`, and a `Retry-After`. Use it after assigning a policy to resources that already
 exist, which Azure does on a schedule and the emulator does only on request.
 

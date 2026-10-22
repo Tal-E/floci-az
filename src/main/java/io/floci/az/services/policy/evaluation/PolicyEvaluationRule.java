@@ -166,7 +166,11 @@ public class PolicyEvaluationRule implements ArmRequestRule {
         for (Match match : admitted.audits()) {
             log.record(event(admitted.request(), match, "audit", "Warning", "Succeeded", admitted.caller(), admitted.correlationId()));
         }
-        compliance.forgetResource(call.id().id());
+        // A tags-only PATCH is evaluated against the tag-inspecting definitions only, so the verdicts of the
+        // others stand; any other write re-evaluated everything and replaces the resource's records.
+        if (!admitted.request().tagsOnly()) {
+            compliance.forgetResource(call.id().id());
+        }
         compliance.record(call.id(), admitted.request().content(), admitted.evaluations());
     }
 

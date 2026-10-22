@@ -65,7 +65,16 @@ public class PolicyInsightsHandler implements AzureServiceHandler {
 
     @Override
     public ServiceRoutes routes() {
-        return ServiceRoutes.builder().provider("Microsoft.PolicyInsights").build();
+        // Guarded: an extension path under any resource (.../containerApps/app/providers/Microsoft.PolicyInsights/...)
+        // belongs to this handler whenever Microsoft.PolicyInsights is the last provider segment, ahead of the
+        // resource's own provider route.
+        return ServiceRoutes.builder().provider("Microsoft.PolicyInsights", PolicyInsightsHandler::isLeafProviderSegment).build();
+    }
+
+    static boolean isLeafProviderSegment(String path) {
+        String lower = path.toLowerCase(Locale.ROOT);
+        int marker = lower.lastIndexOf(MARKER);
+        return marker >= 0 && lower.indexOf("/providers/", marker + 1) < 0;
     }
 
 
@@ -118,7 +127,7 @@ public class PolicyInsightsHandler implements AzureServiceHandler {
         if (!m.matches()) {
             return ArmErrors.error(400, "InvalidRequest", "Evaluation can be triggered at subscription or resource group scope.");
         }
-        int evaluated = scanner.scan(m.group(1), m.group(2));
+        int evaluated = scanner.scan(m.group(1), m.group(2), req);
         LOG.infof("Policy compliance evaluation triggered for %s: %d resources", scope, evaluated);
         String operationId = UUID.randomUUID().toString();
         String base = (req.secure() ? "https://" : "http://") + (req.authority() == null ? req.host() : req.authority());
@@ -151,6 +160,9 @@ public class PolicyInsightsHandler implements AzureServiceHandler {
             try {
                 skip = Integer.parseInt(token);
             } catch (NumberFormatException e) {
+                return queryFailure("InvalidQueryOption", "The $skiptoken is invalid.");
+            }
+            if (skip < 0) {
                 return queryFailure("InvalidQueryOption", "The $skiptoken is invalid.");
             }
         }
@@ -237,9 +249,27 @@ public class PolicyInsightsHandler implements AzureServiceHandler {
         return Response.ok(body).build();
     }
 
+    /**
+     * The {@code SummaryResults} shape. A resource counts once, under its overall state across the states
+     * given: non-compliant when any policy finds it so, otherwise compliant when any policy evaluated it,
+     * otherwise exempt.
+     */
     private static Map<String, Object> results(List<PolicyState> states, int nonCompliantResources, int nonCompliantPolicies) {
-        long compliant = states.stream().filter(PolicyState::isCompliant).map(s -> s.resourceId().toLowerCase(Locale.ROOT)).distinct().count();
-        long exempt = states.stream().filter(s -> "Exempt".equals(s.complianceState())).map(s -> s.resourceId().toLowerCase(Locale.ROOT)).distinct().count();
+        Map<String, String> overall = new LinkedHashMap<>();
+        for (PolicyState state : states) {
+            String resource = state.resourceId().toLowerCase(Locale.ROOT);
+            String current = overall.get(resource);
+            if ("NonCompliant".equals(current)) {
+                continue;
+            }
+            if (!state.isCompliant() && !"Exempt".equals(state.complianceState())) {
+                overall.put(resource, "NonCompliant");
+            } else if (state.isCompliant() || current == null) {
+                overall.put(resource, state.isCompliant() ? "Compliant" : "Exempt");
+            }
+        }
+        long compliant = overall.values().stream().filter("Compliant"::equals).count();
+        long exempt = overall.values().stream().filter("Exempt"::equals).count();
         Map<String, Object> results = new LinkedHashMap<>();
         results.put("queryResultsUri", "");
         results.put("nonCompliantResources", nonCompliantResources);
