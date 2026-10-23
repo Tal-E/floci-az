@@ -209,15 +209,41 @@ public class QueueServiceHandler implements AzureServiceHandler, Resettable {
     }
 
     private Response deleteQueue(AzureRequest request, String queueName) {
+        removeQueue(request.accountName(), queueName);
+        return Response.status(Response.Status.NO_CONTENT).build();
+    }
+
+    /** Whether {@code queueName} exists in {@code accountName}, for the ARM queue resource. */
+    public boolean queueExists(String accountName, String queueName) {
+        return store.get(nsKey(accountName, queueName)).isPresent();
+    }
+
+    /**
+     * Deletes a queue and its messages, as Delete Queue does, for the ARM queue resource.
+     *
+     * @return {@code false} when there was no such queue
+     */
+    public boolean deleteQueue(String accountName, String queueName) {
+        // The check and the delete are one step under the queue record lock (re-entrant), so of two overlapping
+        // deletes only one finds the queue and answers that it removed it.
         synchronized (queueRecordLock) {
-            store.delete(nsKey(request.accountName(), queueName));
+            if (!queueExists(accountName, queueName)) {
+                return false;
+            }
+            removeQueue(accountName, queueName);
+            return true;
         }
-        String msgPrefix = request.accountName() + "/" + queueName + "/";
+    }
+
+    private void removeQueue(String accountName, String queueName) {
+        synchronized (queueRecordLock) {
+            store.delete(nsKey(accountName, queueName));
+        }
+        String msgPrefix = accountName + "/" + queueName + "/";
         store.keys().stream()
                 .filter(k -> k.startsWith(msgPrefix))
                 .toList()
                 .forEach(store::delete);
-        return Response.status(Response.Status.NO_CONTENT).build();
     }
 
     private Response listQueues(AzureRequest request) {
