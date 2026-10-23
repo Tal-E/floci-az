@@ -133,6 +133,7 @@ class ArmSurfaceGoldenTest {
         Microsoft.ContainerService/managedClusters               1-63    null    0    null
         Microsoft.ContainerService/managedClusters/agentPools    1-12    null    0    null
         Microsoft.DBforMariaDB/servers    3-63    MARIADB    409    ServerNameAlreadyExists
+        Microsoft.DBforPostgreSQL/flexibleServers    3-63    POSTGRES    409    ServerNameAlreadyExists
         Microsoft.EventGrid/eventSubscriptions    3-64    null    0    null
         Microsoft.EventGrid/topics    3-50    null    0    null
         Microsoft.Sql/servers                  1-63     SQL     400    NameAlreadyExists
