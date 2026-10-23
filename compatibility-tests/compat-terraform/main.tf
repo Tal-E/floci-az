@@ -1,3 +1,9 @@
+variable "storage_tags" {
+  description = "The storage account's tags; a test applies a changed set to exercise the tag update."
+  type        = map(string)
+  default     = { env = "floci-test" }
+}
+
 variable "location" {
   type    = string
   default = "eastus"
@@ -27,6 +33,8 @@ resource "azurerm_storage_account" "sa" {
   location                 = azurerm_resource_group.rg.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+
+  tags = var.storage_tags
 }
 
 resource "azurerm_storage_container" "sc" {

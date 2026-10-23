@@ -82,6 +82,38 @@ setup() {
     assert_output --partial "blob"
 }
 
+@test "Terraform: storage account tags read back, so a second plan leaves them unchanged" {
+    run arm_get "subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NAME}"
+    assert_success
+    assert_output --partial '"env":"floci-test"'
+
+    # The account still plans other drift (the queue and table encryption key type), so only tags are checked here.
+    cd "$TF_DIR"
+    run terraform plan -input=false -no-color -target=azurerm_storage_account.sa
+    assert_success
+    refute_output --partial "~ tags"
+    refute_output --partial "+ tags"
+}
+
+@test "Terraform: a tag-only change is applied through the account update and leaves no tag drift" {
+    cd "$TF_DIR"
+    local changed='storage_tags={env="floci-test",stage="updated"}'
+    run terraform apply -input=false -auto-approve -no-color -target=azurerm_storage_account.sa -var "$changed"
+    assert_success
+    run arm_get "subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NAME}"
+    assert_success
+    assert_output --partial '"stage":"updated"'
+    run terraform plan -input=false -no-color -target=azurerm_storage_account.sa -var "$changed"
+    assert_success
+    refute_output --partial "~ tags"
+
+    # Back to the configured tags, so the tests after this one see the account as applied.
+    run terraform apply -input=false -auto-approve -no-color -target=azurerm_storage_account.sa
+    assert_success
+    run arm_get "subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NAME}"
+    refute_output --partial '"stage"'
+}
+
 @test "Terraform: storage container listed in blob API" {
     run curl -sf "${FLOCI_AZ_ENDPOINT}/${SA_NAME}?comp=list&restype=container"
     assert_success
