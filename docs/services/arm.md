@@ -406,6 +406,7 @@ passes, as floci-az has always accepted them. The types that declare their rule 
 | `Microsoft.ContainerRegistry/registries` | 5 to 50 letters and digits |
 | `Microsoft.ContainerService/managedClusters` | 1 to 63 letters, digits, underscores and hyphens, starting and ending with a letter or digit |
 | `Microsoft.ContainerService/managedClusters/agentPools` | 1 to 12 lowercase letters and digits, starting with a letter; also checked for the pools in a cluster PUT body |
+| `Microsoft.DBforMariaDB/servers` | 3 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen |
 | `Microsoft.EventGrid/eventSubscriptions` | 3 to 64 letters, digits and hyphens |
 | `Microsoft.EventGrid/topics` | 3 to 50 letters, digits and hyphens |
 | `Microsoft.Sql/servers/databases` | 1 to 128 characters without `<>*%&:\/?` or control characters, not ending with a period or a space |

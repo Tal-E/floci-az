@@ -132,6 +132,7 @@ class ArmSurfaceGoldenTest {
         Microsoft.ContainerRegistry/registries    5-50    ACR    409    AlreadyInUse
         Microsoft.ContainerService/managedClusters               1-63    null    0    null
         Microsoft.ContainerService/managedClusters/agentPools    1-12    null    0    null
+        Microsoft.DBforMariaDB/servers    3-63    MARIADB    409    ServerNameAlreadyExists
         Microsoft.EventGrid/eventSubscriptions    3-64    null    0    null
         Microsoft.EventGrid/topics    3-50    null    0    null
         Microsoft.Sql/servers                  1-63     SQL     400    NameAlreadyExists
