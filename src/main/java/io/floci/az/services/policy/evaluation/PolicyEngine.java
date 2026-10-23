@@ -47,8 +47,19 @@ public class PolicyEngine {
      * @param tagsOnly a PATCH whose body changes only {@code tags}: Azure then evaluates only the definitions
      *                 whose condition inspects a tags field
      */
+    /**
+     * @param readOnly an evaluation cycle rather than a write: nothing is applied to the content, and an
+     *                 {@code append} whose condition holds records the resource as non-compliant, as Azure's
+     *                 compliance evaluation does
+     */
     public record Request(ArmCall call, Map<String, Object> content, String apiVersion, Map<String, Object> identity,
-                          boolean tagsOnly) {
+                          boolean tagsOnly, boolean readOnly) {
+
+        /** A write-time evaluation, which applies what {@code append} asks for. */
+        public Request(ArmCall call, Map<String, Object> content, String apiVersion, Map<String, Object> identity,
+                       boolean tagsOnly) {
+            this(call, content, apiVersion, identity, tagsOnly, false);
+        }
     }
 
     /**
@@ -177,6 +188,8 @@ public class PolicyEngine {
                             "deny", true, match.trace(), match.nonComplianceMessage(), match.error());
                         denials.add(match);
                     }
+                } else if ("append".equals(effect) && match.enforced() && request.readOnly()) {
+                    // An evaluation cycle applies nothing: the resource lacks what the append would add.
                 } else if ("append".equals(effect) && match.enforced()) {
                     String conflict;
                     try {

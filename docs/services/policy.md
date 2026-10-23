@@ -258,11 +258,13 @@ whatever provider serves it: the last `providers/` segment picks Policy Insights
 A tags-only `PATCH` is evaluated against the definitions that inspect tags, so the verdicts of the
 other definitions stay as they were; any other write replaces every record of the resource. An
 enforced `append` that applied leaves the resource compliant with that definition, since the resource
-now carries what the append asked for.
+now carries what the append asked for. A scan is an evaluation cycle, not a write: it applies no
+append and records a resource the append condition matches as non-compliant, as Azure's does.
 
 `policyStates/latest/summarize` answers the `SummarizeResults` shape: counts of non-compliant
-resources and policies, `resourceDetails` and `policyDetails` by compliance state, and one entry per
-assignment with its definitions and their effects. A resource counts once, under its overall state:
+resources and policies, `resourceDetails` and `policyDetails` by compliance state (`noncompliant`,
+`compliant`, `exempt`, lowercase as the specification writes them), and one entry per assignment with
+its definitions and their effects. A resource counts once, under its overall state:
 non-compliant when any policy finds it so, otherwise compliant, otherwise exempt.
 
 `policyStates/latest/triggerEvaluation` at subscription or resource-group scope re-evaluates every

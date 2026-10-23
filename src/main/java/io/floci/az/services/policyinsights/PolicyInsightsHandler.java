@@ -275,10 +275,10 @@ public class PolicyInsightsHandler implements AzureServiceHandler {
         results.put("nonCompliantResources", nonCompliantResources);
         results.put("nonCompliantPolicies", nonCompliantPolicies);
         results.put("resourceDetails", List.of(
-            Map.of("complianceState", "nonCompliant", "count", nonCompliantResources),
+            Map.of("complianceState", "noncompliant", "count", nonCompliantResources),
             Map.of("complianceState", "compliant", "count", compliant),
             Map.of("complianceState", "exempt", "count", exempt)));
-        results.put("policyDetails", List.of(Map.of("complianceState", "nonCompliant", "count", nonCompliantPolicies)));
+        results.put("policyDetails", List.of(Map.of("complianceState", "noncompliant", "count", nonCompliantPolicies)));
         results.put("policyGroupDetails", List.of());
         return results;
     }

@@ -1,5 +1,6 @@
 package io.floci.az.services.policyinsights;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.floci.az.core.ArmRouter;
 import io.floci.az.core.AzureRequest;
@@ -104,7 +105,6 @@ public class ComplianceScanner {
     }
 
     /** The resource as its handler serves it, with the newest api-version its declared type knows; null when unreadable. */
-    @SuppressWarnings("unchecked")
     private Map<String, Object> read(String id, AzureRequest origin) {
         if (origin == null || router == null || router.isUnsatisfied()) {
             return null;
@@ -120,14 +120,12 @@ public class ComplianceScanner {
                 return null;
             }
             Object entity = current.getEntity();
-            if (entity instanceof Map<?, ?> map) {
-                return new LinkedHashMap<>((Map<String, Object>) map);
-            }
             if (entity instanceof String text) {
                 Object parsed = MAPPER.readValue(text, Object.class);
-                return parsed instanceof Map<?, ?> map ? new LinkedHashMap<>((Map<String, Object>) map) : null;
+                return parsed instanceof Map<?, ?> ? MAPPER.convertValue(parsed, new TypeReference<>() { }) : null;
             }
-            return entity == null ? null : new LinkedHashMap<>(MAPPER.convertValue(entity, Map.class));
+            // A deep copy: the handler may have handed out the map it stores, and the evaluation fills computed fields.
+            return entity == null ? null : MAPPER.convertValue(entity, new TypeReference<Map<String, Object>>() { });
         } catch (RuntimeException | IOException e) {
             LOG.debugf(e, "Policy compliance scan: reading %s failed", id);
             return null;
@@ -143,7 +141,8 @@ public class ComplianceScanner {
         if (!PolicyEngine.evaluates(call)) {
             return;
         }
-        PolicyEngine.Outcome outcome = engine.evaluate(new PolicyEngine.Request(call, body, null, Map.of(), false));
+        // Read-only: a scan applies no append and must not write into the body its handler holds.
+        PolicyEngine.Outcome outcome = engine.evaluate(new PolicyEngine.Request(call, body, null, Map.of(), false, true));
         store.forgetResource(id);
         store.record(resourceId, body, outcome.evaluations());
     }

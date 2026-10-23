@@ -97,7 +97,11 @@ class PolicyInsightsTest {
                 .body("'@odata.count'", equalTo(1))
                 .body("value[0].results.nonCompliantResources", equalTo(1))
                 .body("value[0].results.nonCompliantPolicies", equalTo(1))
+                .body("value[0].results.resourceDetails.find { it.complianceState == 'noncompliant' }.count", equalTo(1))
                 .body("value[0].results.resourceDetails.find { it.complianceState == 'compliant' }.count", equalTo(1))
+                .body("value[0].results.resourceDetails.complianceState", equalTo(java.util.List.of("noncompliant", "compliant", "exempt")))
+                .body("value[0].results.policyDetails[0].complianceState", equalTo("noncompliant"))
+                .body("value[0].results.policyDetails[0].count", equalTo(1))
                 .body("value[0].policyAssignments", hasSize(1))
                 .body("value[0].policyAssignments[0].policyAssignmentId", equalTo(ASSIGNMENT))
                 .body("value[0].policyAssignments[0].policyDefinitions[0].policyDefinitionId", equalTo(DEFINITION))
@@ -205,7 +209,7 @@ class PolicyInsightsTest {
         given().when().post(SUB_SCOPE + "/providers/Microsoft.PolicyInsights/policyStates/latest/summarize" + INSIGHTS_API)
                 .then().statusCode(200)
                 .body("value[0].results.nonCompliantResources", equalTo(1))
-                .body("value[0].results.resourceDetails.find { it.complianceState == 'nonCompliant' }.count", equalTo(1))
+                .body("value[0].results.resourceDetails.find { it.complianceState == 'noncompliant' }.count", equalTo(1))
                 .body("value[0].results.resourceDetails.find { it.complianceState == 'compliant' }.count", equalTo(1))
                 .body("value[0].results.resourceDetails.find { it.complianceState == 'exempt' }.count", equalTo(0))
                 .body("value[0].policyAssignments", hasSize(2));
@@ -231,6 +235,32 @@ class PolicyInsightsTest {
                 .body("'@odata.count'", equalTo(1))
                 .body("value[0].complianceState", equalTo("Compliant"))
                 .body("value[0].policyDefinitionAction", equalTo("append"));
+    }
+
+    @Test
+    void scansApplyNoAppendAndRecordItsConditionAsNonCompliant() {
+        String envTag = SUB_SCOPE + AUTH + "/policyDefinitions/env-tag";
+        String cache = RG_SCOPE + "/providers/Microsoft.Cache/Redis/untagged";
+        // The cache exists before the append assignment, so the write never appended the tag.
+        given().contentType("application/json")
+                .body("{\"location\": \"eastus\", \"properties\": {\"sku\": {\"name\": \"Basic\", \"family\": \"C\", \"capacity\": 0}}}")
+                .when().put(cache + REDIS_API).then().statusCode(isOneOf(200, 201));
+        given().contentType("application/json").body("""
+                {"properties": {"mode": "Indexed", "policyRule": {"if": {"allOf": [
+                      {"field": "type", "equals": "Microsoft.Cache/Redis"},
+                      {"field": "tags['env']", "exists": "false"}]},
+                    "then": {"effect": "append", "details": [{"field": "tags['env']", "value": "dev"}]}}}}""")
+                .when().put(envTag + POLICY_API).then().statusCode(201);
+        given().contentType("application/json").body("{\"properties\": {\"policyDefinitionId\": \"" + envTag + "\"}}")
+                .when().put(RG_SCOPE + AUTH + "/policyAssignments/env-tag" + POLICY_API).then().statusCode(201);
+
+        given().when().post(RG_SCOPE + "/providers/Microsoft.PolicyInsights/policyStates/latest/triggerEvaluation" + INSIGHTS_API)
+                .then().statusCode(202);
+        // An evaluation cycle changes nothing and reports the missing tag, as Azure's does.
+        given().when().get(cache + REDIS_API).then().statusCode(200).body("tags.env", nullValue());
+        query(envTag, "").statusCode(200)
+                .body("'@odata.count'", equalTo(1))
+                .body("value[0].complianceState", equalTo("NonCompliant"));
     }
 
     @Test
