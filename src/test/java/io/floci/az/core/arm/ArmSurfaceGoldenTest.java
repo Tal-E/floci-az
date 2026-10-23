@@ -134,6 +134,9 @@ class ArmSurfaceGoldenTest {
         Microsoft.ContainerService/managedClusters/agentPools    1-12    null    0    null
         Microsoft.EventGrid/eventSubscriptions    3-64    null    0    null
         Microsoft.EventGrid/topics    3-50    null    0    null
+        Microsoft.Sql/servers                  1-63     SQL     400    NameAlreadyExists
+        Microsoft.Sql/servers/databases        1-128    null    0      null
+        Microsoft.Sql/servers/firewallRules    1-128    null    0      null
         """;
 
     @Inject
