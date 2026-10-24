@@ -178,9 +178,10 @@ public class ManagementGroupHandler implements AzureServiceHandler {
             } else if (option.equals("path")) {
                 details.put("path", pathTo(tenant, group));
             } else if (option.equals("ancestors")) {
-                List<Map<String, Object>> ancestors = new ArrayList<>();
+                // The spec types managementGroupAncestors as the ancestors' names; the chain carries the path elements.
+                List<String> ancestors = new ArrayList<>();
                 for (Group ancestor : store.ancestors(tenant, group.name())) {
-                    ancestors.add(childInfo(ancestor, false));
+                    ancestors.add(ancestor.name());
                 }
                 details.put("managementGroupAncestors", ancestors);
                 details.put("managementGroupAncestorsChain", ancestorsChain(tenant, group));
@@ -389,7 +390,7 @@ public class ManagementGroupHandler implements AzureServiceHandler {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("value", value);
-        body.put("count", Map.of("type", "Total", "value", value.size()));
+        body.put("count", value.size()); // EntityListResult.count is a plain integer
         return Response.ok(body).build();
     }
 
@@ -480,7 +481,7 @@ public class ManagementGroupHandler implements AzureServiceHandler {
     private List<Map<String, Object>> children(String tenant, Group group, boolean recurse) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Group child : store.childGroups(tenant, group.name())) {
-            Map<String, Object> info = childInfo(child, true);
+            Map<String, Object> info = childInfo(child);
             if (recurse) {
                 info.put("children", children(tenant, child, true));
             }
@@ -497,11 +498,9 @@ public class ManagementGroupHandler implements AzureServiceHandler {
         return out;
     }
 
-    private static Map<String, Object> childInfo(Group group, boolean typed) {
+    private static Map<String, Object> childInfo(Group group) {
         Map<String, Object> info = new LinkedHashMap<>();
-        if (typed) {
-            info.put("type", TYPE);
-        }
+        info.put("type", TYPE);
         info.put("id", group.id());
         info.put("name", group.name());
         info.put("displayName", group.displayName());

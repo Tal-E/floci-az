@@ -68,7 +68,7 @@ class ManagementGroupTest {
                 .body("properties.details.path.name", equalTo(java.util.List.of(TENANT, "platform", "landing-zones", "corp")));
         given().when().get(BASE + "/managementGroups/corp" + API + "&$expand=ancestors")
                 .then().statusCode(200)
-                .body("properties.details.managementGroupAncestors.name", equalTo(java.util.List.of("landing-zones", "platform", TENANT)))
+                .body("properties.details.managementGroupAncestors", equalTo(java.util.List.of("landing-zones", "platform", TENANT)))
                 .body("properties.details.managementGroupAncestorsChain[0].displayName", equalTo("Landing zones"));
         given().when().get(ROOT + API + "&$expand=children&$recurse=true")
                 .then().statusCode(200)
@@ -187,10 +187,11 @@ class ManagementGroupTest {
                 .body("value.find { it.name == 'prod' }.properties.parentNameChain", equalTo(java.util.List.of(TENANT)))
                 .body("value.find { it.name == '" + SUB + "' }.type", equalTo("/subscriptions"))
                 .body("value.find { it.name == '" + SUB + "' }.properties.parentNameChain", equalTo(java.util.List.of("prod", TENANT)))
-                .body("count.type", equalTo("Total"));
+                .body("count", equalTo(given().when().post(BASE + "/getEntities" + API).then().extract().jsonPath().getList("value").size()));
         given().when().post(BASE + "/getEntities" + API + "&groupName=prod")
                 .then().statusCode(200)
-                .body("value.name", equalTo(java.util.List.of("prod", SUB)));
+                .body("value.name", equalTo(java.util.List.of("prod", SUB)))
+                .body("count", equalTo(2));
 
         given().contentType("application/json").body("{\"name\": \"prod\", \"type\": \"Microsoft.Management/managementGroups\"}")
                 .when().post(BASE + "/checkNameAvailability" + API)
