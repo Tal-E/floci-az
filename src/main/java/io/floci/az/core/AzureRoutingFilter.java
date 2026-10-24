@@ -507,19 +507,19 @@ public class AzureRoutingFilter {
     // ── Terminal: account-name routing ──────────────────────────────────────────
 
     /**
-     * Terminal stage: {@code /{account}[-suffix]/{resourcePath}}. Unlike the stages above, an unknown or
-     * disabled service produces an Azure error response here rather than declining — this is the last
-     * chance to answer, so silence would surface as a bare 404.
+     * Terminal stage: {@code /{account}[-suffix]/{resourcePath}}. Unlike the stages above, an unknown
+     * or disabled service produces an Azure error response here rather than declining — this is the
+     * last chance to answer, so silence would surface as a bare 404.
      */
     private Response dispatchByAccountSuffix(RoutingContext ctx) {
         String accountName = ctx.firstSegment();
+        String resourcePath = ctx.resourcePath();
+        SuffixRoute route = matchSuffix(accountSuffixRoutes, accountName);
         if (accountName.isEmpty()) {
             return null;
         }
-        String resourcePath = ctx.resourcePath();
 
         String serviceType;
-        SuffixRoute route = matchSuffix(accountSuffixRoutes, accountName);
         if (route != null) {
             serviceType = route.serviceType();
             accountName = stripSuffix(accountName, route);
@@ -552,7 +552,7 @@ public class AzureRoutingFilter {
         if (ctx.headers().getHeaderString("x-ms-blob-type") != null) {
             return "blob";
         }
-        if (resourcePath.contains("/messages") || resourcePath.endsWith("/messages")) {
+        if (isQueueMessagePath(resourcePath)) {
             return "queue";
         }
         List<String> restype = ctx.queryParameters().get("restype");
@@ -563,6 +563,20 @@ public class AzureRoutingFilter {
             return "queue";
         }
         return "blob";
+    }
+
+    /** Queue message operations use exactly {@code {queue}/messages[/{messageId}]}. */
+    private static boolean isQueueMessagePath(String resourcePath) {
+        int queueSeparator = resourcePath.indexOf('/');
+        if (queueSeparator < 0) {
+            return false;
+        }
+        int messageStart = queueSeparator + 1;
+        int messageEnd = resourcePath.indexOf('/', messageStart);
+        String messageSegment = messageEnd < 0
+            ? resourcePath.substring(messageStart)
+            : resourcePath.substring(messageStart, messageEnd);
+        return "messages".equals(messageSegment);
     }
 
     // ── Dispatch helpers ────────────────────────────────────────────────────────
