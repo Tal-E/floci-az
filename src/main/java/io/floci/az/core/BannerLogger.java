@@ -198,6 +198,9 @@ public class BannerLogger {
         sb.append(String.format("   %-9s [%s]  %s\n", "graph-rg",
                 config.services().resourceGraph().enabled() ? "enabled " : "disabled",
                 "Microsoft.ResourceGraph (KQL queries over resources, resource containers, policy resources)"));
+        sb.append(String.format("   %-9s [%s]  %s\n", "mgmtgrps",
+                config.services().managementGroups().enabled() ? "enabled " : "disabled",
+                "Microsoft.Management (management groups, descendants, subscription membership, entities)"));
         if (config.services().eventGrid().enabled()) {
             sb.append(serviceStatus("eventgrid", true, getStorageMode("eventgrid")));
         }

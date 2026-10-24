@@ -70,6 +70,9 @@ class ArmSurfaceGoldenTest {
         Microsoft.ManagedIdentity/identities                                           EXTENSION       OPTIONAL  FILTER
         Microsoft.ManagedIdentity/userAssignedIdentities                               RESOURCE_GROUP  REQUIRED  FILTER
         Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials  RESOURCE_GROUP  OPTIONAL  FILTER
+        Microsoft.Management/managementGroups                                          TENANT          NONE      FILTER
+        Microsoft.Management/managementGroups/settings                                 TENANT          NONE      FILTER
+        Microsoft.Management/managementGroups/subscriptions                            TENANT          NONE      FILTER
         Microsoft.Network/applicationGateways                                          RESOURCE_GROUP  REQUIRED  ARM_HANDLER
         Microsoft.Network/dnsZones                                                     RESOURCE_GROUP  GLOBAL    ARM_HANDLER
         Microsoft.Network/dnsZones/A                                                   RESOURCE_GROUP  OPTIONAL  ARM_HANDLER

@@ -339,6 +339,7 @@ public interface EmulatorConfig {
         ContainerAppsConfig    containerApps();
         PolicyConfig           policy();
         ResourceGraphConfig    resourceGraph();
+        ManagementGroupsConfig managementGroups();
 
         /** Shared Docker network for sidecar containers (Artemis, Redpanda, etc.). */
         Optional<String> dockerNetwork();
@@ -480,6 +481,12 @@ public interface EmulatorConfig {
      * the resources, resource containers and policy resources the emulator holds.
      */
     interface ResourceGraphConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    /** Azure Management Groups ({@code Microsoft.Management}): the tenant hierarchy of groups and subscriptions. */
+    interface ManagementGroupsConfig {
         @WithDefault("true")
         boolean enabled();
     }

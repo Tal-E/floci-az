@@ -36,6 +36,7 @@ Floci-AZ provides emulation for several core Azure services.
 | **Managed Identity** | ARM path (`Microsoft.ManagedIdentity`) + `/metadata/identity/oauth2/token` + `/msi/token` | ✅ User-assigned identities + federated identity credentials, system-assigned `identities/default`, IMDS token endpoint (`ManagedIdentityCredential` via `AZURE_POD_IDENTITY_AUTHORITY_HOST`), App Service token endpoint (`IDENTITY_ENDPOINT` / `IDENTITY_HEADER`); tokens signed with the Entra key |
 | **Azure Policy** | ARM path (`Microsoft.Authorization/policy*`) | ✅ Policy definitions, set definitions, assignments and exemptions at management-group, subscription, resource-group and resource scope; assigned rules evaluated on writes (`deny`, `append`, `audit`); compliance states, summaries and on-demand scans through `Microsoft.PolicyInsights`; no built-in definitions |
 | **Azure Resource Graph** | ARM path (`Microsoft.ResourceGraph/resources`) | ✅ KQL queries over `resources`, `resourcecontainers` and `policyresources`: `where`, `extend`, `project`, `summarize`, `order by`, `distinct`, `union`, `join`, the comparison and string operators, the conversion and string functions; `objectArray` / `table` formats, `$top` / `$skip` / `$skipToken` paging |
+| **Azure Management Groups** | ARM path (`Microsoft.Management/managementGroups`) | ✅ Tenant root group, groups (create, get with `$expand` / `$recurse`, patch, delete, list, descendants), subscription membership, `getEntities`, `checkNameAvailability` |
 
 ## Unified Endpoint
 
