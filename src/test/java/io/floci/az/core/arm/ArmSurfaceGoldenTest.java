@@ -149,6 +149,7 @@ class ArmSurfaceGoldenTest {
         Microsoft.Network/publicIPAddresses        1-80    null    0    null
         Microsoft.Network/virtualNetworks          2-64    null    0    null
         Microsoft.Network/virtualNetworks/subnets  1-80    null    0    null
+        Microsoft.OperationalInsights/workspaces    4-63    null    0    null
         Microsoft.Sql/servers                  1-63     SQL     400    NameAlreadyExists
         Microsoft.Sql/servers/databases        1-128    null    0      null
         Microsoft.Sql/servers/firewallRules    1-128    null    0      null
