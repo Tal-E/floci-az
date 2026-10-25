@@ -3,7 +3,6 @@ package io.floci.az.services.arm;
 import io.floci.az.config.EmulatorConfig;
 import io.floci.az.core.AzureRequest;
 import io.floci.az.core.AzureServiceHandler;
-import io.floci.az.core.Resettable;
 import io.floci.az.core.arm.ArmErrors;
 import io.floci.az.core.arm.ArmJson;
 import io.floci.az.core.arm.ArmPaths;
@@ -12,7 +11,6 @@ import io.floci.az.core.arm.ArmRequestGate;
 import io.floci.az.core.arm.ArmResourceFilter;
 import io.floci.az.core.arm.ArmResourceId;
 import io.floci.az.core.arm.ArmResources;
-import io.floci.az.core.arm.ArmScope;
 import io.floci.az.core.arm.ResourceIndexContributor;
 import io.floci.az.core.cloud.CloudCatalog;
 import io.floci.az.core.cloud.CloudProfile;
@@ -21,11 +19,9 @@ import io.floci.az.core.directory.DirectoryOrigin;
 import io.floci.az.core.directory.Subscription;
 import io.floci.az.core.directory.Tenant;
 import io.floci.az.services.apim.ApiManagementHandler;
-import io.floci.az.services.blob.BlobServiceHandler;
 import io.floci.az.services.managedidentity.ManagedIdentityHandler;
 import io.floci.az.services.monitor.activitylog.ActivityLogEndpoint;
 import io.floci.az.services.network.NetworkHandler;
-import io.floci.az.services.queue.QueueServiceHandler;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
@@ -33,20 +29,12 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Queue;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
-
-import static io.floci.az.core.auth.StorageSasAuthorization.DEFAULT_STORAGE_ACCOUNT_KEY;
 
 /**
  * ARM management-plane handler for Azure Resource Manager paths that are not
@@ -59,20 +47,14 @@ import static io.floci.az.core.auth.StorageSasAuthorization.DEFAULT_STORAGE_ACCO
  *   <li>Subscription — {@code GET /subscriptions/{sub}}</li>
  *   <li>Resource Groups: {@code PUT/GET/HEAD/PATCH/DELETE /subscriptions/{sub}/resourceGroups/{rg}}, served by
  *       {@link ResourceGroupService}</li>
- *   <li>Storage Accounts — ARM shell that bridges container/queue creation to the
- *       existing Blob and Queue storage backends</li>
  * </ul>
  */
 @ApplicationScoped
-public class ArmHandler implements AzureServiceHandler, Resettable {
+public class ArmHandler implements AzureServiceHandler {
 
     private static final Logger LOG = Logger.getLogger(ArmHandler.class);
 
-    // In-memory ARM resource state — no StorageBackend needed, these are ephemeral
-    private final Map<String, Map<String, Object>> storageAccounts  = new ConcurrentHashMap<>();
     private final EmulatorConfig config;
-    private final BlobServiceHandler blobHandler;
-    private final QueueServiceHandler queueHandler;
     private final ApiManagementHandler apiManagementHandler;
     private final NetworkHandler networkHandler;
     private final ManagedIdentityHandler managedIdentityHandler;
@@ -97,16 +79,13 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
     private final ProviderService providerService;
 
     @Inject
-    public ArmHandler(EmulatorConfig config, BlobServiceHandler blobHandler, QueueServiceHandler queueHandler,
-                      ApiManagementHandler apiManagementHandler,
+    public ArmHandler(EmulatorConfig config, ApiManagementHandler apiManagementHandler,
                       NetworkHandler networkHandler, ManagedIdentityHandler managedIdentityHandler,
                       Instance<ArmProviderService> providerServices,
                       Instance<ResourceIndexContributor> resourceIndexContributors, ArmRequestGate gate,
                       AzureDirectory directory, ResourceGroupService resourceGroups,
                       ProviderService providerService) {
         this.config               = config;
-        this.blobHandler          = blobHandler;
-        this.queueHandler         = queueHandler;
         this.apiManagementHandler = apiManagementHandler;
         this.networkHandler       = networkHandler;
         this.managedIdentityHandler = managedIdentityHandler;
@@ -235,23 +214,11 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
         }
 
         // ── checkNameAvailability ──────────────────────────────────────────────
-        // az CLI probes this before creating storage accounts. ARM paths are case-insensitive, so the
+        // For a namespace no provider service answers itself. ARM paths are case-insensitive, so the
         // operation matches in any casing.
         if (path.toLowerCase(Locale.ROOT)
                 .matches("subscriptions/[^/]+/providers/microsoft\\.[^/]+/checknameavailability([?].*)?")) {
-            return checkNameAvailability(req, path);
-        }
-
-        // ── Cross-subscription storage account listing ─────────────────────────
-        // azurerm provider calls this during state refresh/destroy to verify that
-        // storage accounts still exist. Return real data so destroy plans correctly.
-        if (path.matches("subscriptions/[^/?]+/providers/(?i:Microsoft\\.Storage)/storageAccounts([?].*)?")) {
-            String sub = extractSub(path);
-            List<Map<String, Object>> accounts = storageAccounts.values().stream()
-                    .filter(a -> sub.equals(a.get("_sub")))
-                    .map(ArmHandler::stripInternal)
-                    .toList();
-            return Response.ok(Map.of("value", accounts)).build();
+            return checkNameAvailability();
         }
 
         // ── Subscription Activity Log (Microsoft.Insights/eventtypes/management/values) ──
@@ -340,8 +307,7 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
      * resource group otherwise. Both ARM listings answer from this one assembly so they cannot
      * disagree about what the estate holds.
      *
-     * <p>ArmHandler's own Storage state (and the Key Vault and Web contributors) contributes the full stored
-     * body rather than the trimmed {@code ArmResources.indexEntry} shape: the azurerm provider reads this
+     * <p>The Key Vault, Web and Storage contributors contribute the full stored body rather than the trimmed {@code ArmResources.indexEntry} shape: the azurerm provider reads this
      * listing to populate its Key Vault cache and looks vaults up by {@code properties.vaultUri},
      * which a properties-free entry would not carry. A deliberate deviation from Azure, whose
      * generic listing never carries {@code properties} — its {@code $expand} adds only
@@ -352,7 +318,6 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
      */
     public List<Map<String, Object>> indexedResources(String sub, String rg, boolean everyContributor) {
         List<Map<String, Object>> resources = new ArrayList<>();
-        collectOwn(storageAccounts, sub, rg, resources);
         if (config.services().network().enabled()) {
             resources.addAll(rg == null
                     ? networkHandler.listResources(sub)
@@ -376,24 +341,10 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
         return resources;
     }
 
-    /** ArmHandler's own ARM state for a scope, stripped of the internal routing keys. */
-    private static void collectOwn(Map<String, Map<String, Object>> state, String sub, String rg,
-                                   List<Map<String, Object>> out) {
-        state.values().stream()
-                .filter(r -> sub.equals(r.get(ArmResources.SUB_KEY))
-                        && (rg == null || rg.equals(r.get(ArmResources.RG_KEY))))
-                .map(ArmHandler::stripInternal)
-                .forEach(out::add);
-    }
-
     // ── Provider-level routing ────────────────────────────────────────────────
 
     private Response handleProviders(AzureRequest req, String path, String method, String sub) {
-        // The inline ARM shell that bridges to the Storage data plane, coupled to it, so it stays here.
-        if (ArmPaths.hasProvider(path, "Microsoft.Storage")) {
-            return handleStorage(req, path, method, sub);
-        }
-        // Delegating providers (Key Vault/Web/APIM/Monitor/EventGrid), via the ArmProviderService lane.
+        // Delegating providers (Key Vault/Web/Storage/APIM/Monitor/EventGrid), via the ArmProviderService lane.
         ArmProviderService provider = providerLane(providerNamespace(path));
         if (provider != null) {
             return provider.armEnabled() ? provider.handleArm(req, path, method, sub) : armNotFound(path);
@@ -440,321 +391,13 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
         return slash < 0 ? rest : rest.substring(0, slash);
     }
 
-    // ── Storage Accounts ─────────────────────────────────────────────────────
-
-    private Response handleStorage(AzureRequest req, String path, String method, String sub) {
-        String rg = extractRg(path);
-
-        // Containers, queues and keys reach the shared data plane, which knows only the account name.
-        // Under a scope that does not own the account they must stop here, before touching the owner's data.
-        if (path.contains("/storageAccounts/") && !path.matches(".*/storageAccounts/[^/?]+([?].*)?")) {
-            String account = extractResourceName(path, "storageAccounts");
-            if (ownedElsewhere(storageAccounts, sub, rg, account).isPresent()) {
-                return armNotFound("storageAccounts/" + account);
-            }
-        }
-
-        // POST .../storageAccounts/{name}/listKeys
-        if (path.contains("/storageAccounts/") && path.endsWith("/listKeys")) {
-            String account = extractResourceName(path, "storageAccounts");
-            return listKeys(account);
-        }
-
-        // .../storageAccounts/{name}/blobServices/default/containers/{container}
-        if (path.contains("/blobServices/default/containers/")) {
-            return handleBlobContainer(req, path, method, sub, rg);
-        }
-
-        // .../storageAccounts/{name}/blobServices/default  (blobServices properties)
-        if (path.contains("/blobServices/default") && !path.contains("/containers/")) {
-            return Response.ok(Map.of("id", path, "name", "default",
-                    "type", "Microsoft.Storage/storageAccounts/blobServices",
-                    "properties", Map.of())).build();
-        }
-
-        // .../storageAccounts/{name}/queueServices/default/queues/{queue}
-        if (path.contains("/queueServices/default/queues/")) {
-            return handleQueueResource(req, path, method, sub, rg);
-        }
-
-        // .../storageAccounts/{name}/queueServices/default  (queueServices properties)
-        if (path.contains("/queueServices/default") && !path.contains("/queues/")) {
-            return Response.ok(Map.of("id", path, "name", "default",
-                    "type", "Microsoft.Storage/storageAccounts/queueServices",
-                    "properties", Map.of())).build();
-        }
-
-        // GET .../storageAccounts  (list in RG)
-        if (path.matches(".*/providers/(?i:Microsoft\\.Storage)/storageAccounts([?].*)?")) {
-            List<Map<String, Object>> accounts = storageAccounts.values().stream()
-                    .filter(a -> sub.equals(a.get("_sub")) && rg.equals(a.get("_rg")))
-                    .map(ArmHandler::stripInternal)
-                    .toList();
-            return Response.ok(Map.of("value", accounts)).build();
-        }
-
-        // PUT/GET/DELETE .../storageAccounts/{name}
-        if (path.contains("/storageAccounts/")) {
-            String account = extractResourceName(path, "storageAccounts");
-            return switch (method) {
-                case "PUT"    -> createOrUpdateStorageAccount(req, sub, rg, account);
-                case "PATCH"  -> updateStorageAccount(req, sub, rg, account);
-                case "GET"    -> getStorageAccount(sub, rg, account);
-                case "DELETE" -> {
-                    synchronized (this) {
-                        if (storageAccounts.remove(saKey(sub, rg, account)) != null) {
-                            blobHandler.removeHierarchicalNamespaceOverride(account);
-                        }
-                    }
-                    yield Response.ok().build();
-                }
-                default       -> Response.status(405).build();
-            };
-        }
-
-        return armNotFound(path);
-    }
-
-    private synchronized Response createOrUpdateStorageAccount(AzureRequest req, String sub, String rg, String account) {
-        if (!account.matches("[a-z0-9]{3,24}")) {
-            return ArmErrors.error(400, "AccountNameInvalid", account
-                    + " is not a valid storage account name. Storage account name must be between 3 and 24 "
-                    + "characters in length and use numbers and lower-case letters only.");
-        }
-        Optional<Map<String, Object>> owner = ownedElsewhere(storageAccounts, sub, rg, account);
-        if (owner.isPresent()) {
-            return sub.equalsIgnoreCase((String) owner.get().get("_sub"))
-                    ? ArmErrors.error(409, "StorageAccountInAnotherResourceGroup",
-                            "The account " + account + " is already in another resource group in this subscription.")
-                    : ArmErrors.error(409, "StorageAccountAlreadyTaken",
-                            "The storage account named " + account + " is already taken.");
-        }
-        Map<String, Object> body = parseBody(req);
-        String location = bodyString(body, "location", "eastus");
-        Map<String, Object> requestedProperties = cast(body.get("properties"));
-        Map<String, Object> existing = storageAccounts.get(saKey(sub, rg, account));
-        Map<String, Object> existingProperties = cast(existing == null ? null : existing.get("properties"));
-        boolean existingHnsEnabled = Boolean.TRUE.equals(existingProperties.get("isHnsEnabled"));
-        if (existing != null && requestedProperties.containsKey("isHnsEnabled")
-                && existingHnsEnabled != Boolean.TRUE.equals(requestedProperties.get("isHnsEnabled"))) {
-            return ArmErrors.error(400, "AccountPropertyCannotBeUpdated",
-                    "The property 'isHnsEnabled' was specified in the input, but it cannot be updated as it is "
-                            + "read-only. For more information, see - https://aka.ms/storageaccountupdate");
-        }
-        boolean hnsEnabled = requestedProperties.containsKey("isHnsEnabled")
-                ? Boolean.TRUE.equals(requestedProperties.get("isHnsEnabled"))
-                : existingProperties.containsKey("isHnsEnabled")
-                        ? existingHnsEnabled
-                        : config.services().blob().hierarchicalNamespaceAccounts().contains(account);
-        // Return domain-based storage endpoints so the azurerm provider can parse the account name.
-        // The port is taken from the configured base URL so data-plane requests reach our emulator.
-        String portStr = storagePortString();
-
-        Map<String, Object> resource = new LinkedHashMap<>();
-        resource.put("_sub", sub);
-        resource.put("_rg", rg);
-        resource.put("id", "/subscriptions/" + sub + "/resourceGroups/" + rg
-                + "/providers/Microsoft.Storage/storageAccounts/" + account);
-        resource.put("name", account);
-        resource.put("type", "Microsoft.Storage/storageAccounts");
-        resource.put("location", location);
-        Map<String, Object> tags = tags(body.get("tags"));
-        if (tags != null) {
-            resource.put("tags", tags);
-        }
-        resource.put("sku", Map.of("name", "Standard_LRS", "tier", "Standard"));
-        resource.put("kind", "StorageV2");
-        resource.put("properties", Map.of(
-                "provisioningState", "Succeeded",
-                "isHnsEnabled", hnsEnabled,
-                "primaryEndpoints", Map.of(
-                        "blob",  "http://" + account + ".blob.core.windows.net" + portStr + "/",
-                        "dfs",   "http://" + account + ".dfs.core.windows.net" + portStr + "/",
-                        "queue", "http://" + account + ".queue.core.windows.net" + portStr + "/",
-                        "table", "http://" + account + ".table.core.windows.net" + portStr + "/"),
-                "primaryLocation", location,
-                "statusOfPrimary", "available",
-                "supportsHttpsTrafficOnly", false,
-                "accessTier", "Hot",
-                "encryption", Map.of(
-                        "services", Map.of(
-                                "blob",  Map.of("enabled", true, "keyType", "Account"),
-                                "file",  Map.of("enabled", true, "keyType", "Account"),
-                                "queue", Map.of("enabled", true, "keyType", "Account"),
-                                "table", Map.of("enabled", true, "keyType", "Account")),
-                        "keySource", "Microsoft.Storage")
-        ));
-
-        storageAccounts.put(saKey(sub, rg, account), resource);
-        blobHandler.setHierarchicalNamespaceEnabled(account, hnsEnabled);
-        LOG.infof("ARM: created storage account %s", account);
-        return Response.ok(stripInternal(resource)).build();
-    }
-
     /**
-     * {@code StorageAccounts_Update}: the {@code tags} the body names replace the account's, as azurerm updates them;
-     * nothing else in the body is applied yet.
+     * {@code POST .../providers/{namespace}/checkNameAvailability} for a namespace no provider service answers
+     * itself: there is no store to consult, so the name is reported as available. A provider-lane namespace that
+     * serves its subscription-level paths (Key Vault, Web, Storage) answers its own.
      */
-    private synchronized Response updateStorageAccount(AzureRequest req, String sub, String rg, String account) {
-        Map<String, Object> resource = storageAccounts.get(saKey(sub, rg, account));
-        if (resource == null) {
-            return armNotFound("storageAccounts/" + account);
-        }
-        Map<String, Object> tags = tags(parseBody(req).get("tags"));
-        if (tags != null) {
-            Map<String, Object> updated = new LinkedHashMap<>();
-            resource.forEach((key, value) -> {
-                if (!key.equals("tags")) {
-                    updated.put(key, value);
-                }
-                if (key.equals("location")) {
-                    updated.put("tags", tags);
-                }
-            });
-            storageAccounts.put(saKey(sub, rg, account), updated);
-            resource = updated;
-        }
-        return Response.ok(stripInternal(resource)).build();
-    }
-
-    /** A {@code tags} object as sent, or null when the body names none, so an account without tags omits them. */
-    private static Map<String, Object> tags(Object raw) {
-        if (!(raw instanceof Map<?, ?> map)) {
-            return null;
-        }
-        Map<String, Object> tags = new LinkedHashMap<>();
-        map.forEach((key, value) -> tags.put(String.valueOf(key), value));
-        return tags;
-    }
-
-    private Response getStorageAccount(String sub, String rg, String account) {
-        Map<String, Object> resource = storageAccounts.get(saKey(sub, rg, account));
-        if (resource == null) {
-            return armNotFound("storageAccounts/" + account);
-        }
-        return Response.ok(stripInternal(resource)).build();
-    }
-
-    private Response listKeys(String account) {
-        // The key the Storage data plane verifies this account's Shared Key SAS with, so a SAS
-        // built from either listed key is accepted.
-        String key = config.auth().storageAccountKeys().getOrDefault(account, DEFAULT_STORAGE_ACCOUNT_KEY);
-        return Response.ok(Map.of("keys", List.of(
-                Map.of("keyName", "key1", "value", key, "permissions", "Full"),
-                Map.of("keyName", "key2", "value", key, "permissions", "Full")
-        ))).build();
-    }
-
-    // ── Blob Container (via ARM) ──────────────────────────────────────────────
-
-    private Response handleBlobContainer(AzureRequest req, String path, String method, String sub, String rg) {
-        String account   = extractResourceName(path, "storageAccounts");
-        String container = extractAfter(path, "/containers/");
-
-        return switch (method) {
-            case "PUT" -> {
-                blobHandler.ensureContainer(account, container);
-                Map<String, Object> body = parseBody(req);
-                Map<String, Object> props = Map.of(
-                        "publicAccess",      "None",
-                        "leaseStatus",       "Unlocked",
-                        "leaseState",        "Available",
-                        "lastModifiedTime",  Instant.now().toString(),
-                        "etag",              "\"" + UUID.randomUUID() + "\"");
-                yield Response.status(201).entity(Map.of(
-                        "id",         path,
-                        "name",       container,
-                        "type",       "Microsoft.Storage/storageAccounts/blobServices/containers",
-                        "properties", props
-                )).build();
-            }
-            case "GET" -> blobHandler.containerExists(account, container)
-                    ? Response.ok(Map.of(
-                            "id",         path,
-                            "name",       container,
-                            "type",       "Microsoft.Storage/storageAccounts/blobServices/containers",
-                            "properties", Map.of("publicAccess", "None")
-                    )).build()
-                    : ArmErrors.error(404, "ContainerNotFound", "The specified container does not exist.");
-            // BlobContainers_Delete: 200 when it deleted the container, 204 when there was none.
-            case "DELETE" -> Response.status(blobHandler.deleteContainer(account, container) ? 200 : 204).build();
-            default -> Response.status(405).build();
-        };
-    }
-
-    // ── Queue Resource (via ARM) ──────────────────────────────────────────────
-
-    private Response handleQueueResource(AzureRequest req, String path, String method, String sub, String rg) {
-        String account = extractResourceName(path, "storageAccounts");
-        String queue   = extractAfter(path, "/queues/");
-
-        return switch (method) {
-            case "PUT" -> {
-                queueHandler.ensureQueue(account, queue);
-                // Queue_Create declares 200 only, for a new queue and an existing one alike.
-                yield Response.ok(Map.of(
-                        "id",         path,
-                        "name",       queue,
-                        "type",       "Microsoft.Storage/storageAccounts/queueServices/queues",
-                        "properties", Map.of()
-                )).build();
-            }
-            case "GET" -> queueHandler.queueExists(account, queue)
-                    ? Response.ok(Map.of(
-                            "id",         path,
-                            "name",       queue,
-                            "type",       "Microsoft.Storage/storageAccounts/queueServices/queues",
-                            "properties", Map.of()
-                    )).build()
-                    : ArmErrors.error(404, "QueueNotFound", "The specified queue does not exist.");
-            // Queue_Delete declares 204 only, whether or not the queue existed.
-            case "DELETE" -> {
-                queueHandler.deleteQueue(account, queue);
-                yield Response.noContent().build();
-            }
-            default -> Response.status(405).build();
-        };
-    }
-
-    // ── Global resource names ────────────────────────────────────────────────
-    // Storage accounts are DNS names, unique across every subscription. A create under a second scope is a name conflict, never a second resource.
-    // Its create method is synchronized so the ownership check and the write are one step.
-
-    /** The resource named {@code name} in {@code store} when it belongs to a scope other than {@code sub}/{@code rg}. */
-    private static Optional<Map<String, Object>> ownedElsewhere(Map<String, Map<String, Object>> store,
-                                                               String sub, String rg, String name) {
-        ArmScope scope = new ArmScope(sub, rg);
-        return store.values().stream()
-                .filter(r -> name.equalsIgnoreCase((String) r.get("name")))
-                .filter(r -> !scope.owns((String) r.get("_sub"), (String) r.get("_rg")))
-                .findFirst();
-    }
-
-    /**
-     * {@code POST .../providers/{namespace}/checkNameAvailability}. Storage accounts are answered from this
-     * handler's own store; any other namespace routed here has no store to consult and reports the name as
-     * available. A provider-lane namespace that serves its subscription-level paths (Key Vault, Web) answers its
-     * own.
-     */
-    private Response checkNameAvailability(AzureRequest req, String path) {
-        String name = bodyString(parseBody(req), "name", "");
-        String namespace = ArmPaths.segmentAfter(path, "providers", "");
-        boolean storage = "Microsoft.Storage".equalsIgnoreCase(namespace);
-        if (storage && !name.matches("[a-z0-9]{3,24}")) {
-            return Response.ok(Map.of(
-                    "nameAvailable", false,
-                    "reason", "AccountNameInvalid",
-                    "message", name + " is not a valid storage account name. Storage account name must be between "
-                            + "3 and 24 characters in length and use numbers and lower-case letters only.")).build();
-        }
-        Map<String, Map<String, Object>> store = storage ? storageAccounts : null;
-        boolean taken = store != null && store.values().stream()
-                .anyMatch(r -> name.equalsIgnoreCase((String) r.get("name")));
-        if (!taken) {
-            return Response.ok(Map.of("nameAvailable", true)).build();
-        }
-        return Response.ok(Map.of("nameAvailable", false, "reason", "AlreadyExists",
-                "message", "The storage account named " + name + " is already taken.")).build();
+    private static Response checkNameAvailability() {
+        return Response.ok(Map.of("nameAvailable", true)).build();
     }
 
     // ── Subscription ─────────────────────────────────────────────────────────
@@ -815,11 +458,6 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
         return directory.tenant(tokenTenantId).map(Tenant::id).orElse(directory.defaultTenantId());
     }
 
-    @Override
-    public void clear() {
-        storageAccounts.clear();
-    }
-
     /**
      * {@code subscriptions/{sub}/providers}, {@code .../providers/{namespace}} and its {@code register} and
      * {@code unregister} actions, served by {@link ProviderService}; null for any other path.
@@ -861,36 +499,12 @@ public class ArmHandler implements AzureServiceHandler, Resettable {
         return ArmPaths.resourceGroup(path, "unknown");
     }
 
-    private static String extractResourceName(String path, String resourceType) {
-        return ArmPaths.resourceName(path, resourceType, "unknown");
-    }
-
     private static String extractAfter(String path, String marker) {
         return ArmPaths.afterSegment(path, marker, "unknown");
     }
 
-    private static String saKey(String sub, String rg, String name)  { return sub + "/" + rg + "/" + name; }
-
-    private static Map<String, Object> cast(Object o) {
-        return ArmJson.cast(o);
-    }
-
-    private static String bodyString(Map<String, Object> map, String key, String defaultValue) {
-        return ArmJson.string(map, key, defaultValue);
-    }
-
-    private Map<String, Object> parseBody(AzureRequest req) {
-        return ArmJson.parseBodyLenient(req);
-    }
-
     private static Map<String, Object> stripInternal(Map<String, Object> resource) {
         return ArmResources.stripInternal(resource);
-    }
-
-    private String storagePortString() {
-        // Return no port so storage URLs use standard HTTP port 80.
-        // Test containers forward port 80 → emulator via socat.
-        return "";
     }
 
     private Response armNotFound(String path) {

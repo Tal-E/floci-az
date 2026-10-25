@@ -428,6 +428,7 @@ passes, as floci-az has always accepted them. The types that declare their rule 
 | `Microsoft.Sql/servers/databases` | 1 to 128 characters without `<>*%&:\/?` or control characters, not ending with a period or a space |
 | `Microsoft.Sql/servers/firewallRules` | 1 to 128 characters without `<>*%&:;\/?` or control characters, not ending with a period |
 | `Microsoft.Sql/servers` | 1 to 63 lowercase letters, digits and hyphens, not starting or ending with a hyphen |
+| `Microsoft.Storage/storageAccounts` | 3 to 24 lowercase letters and digits; checked with or without `strict-names`, answered `400 AccountNameInvalid` as floci-az always has, before any name conflict |
 | `Microsoft.Web/sites` | 2 to 60 letters, digits and hyphens, not starting or ending with a hyphen (the Unicode characters Azure maps to Punycode are refused) |
 
 The other types declare theirs as they move to the shared resource store. The code is an emulator choice: no local
