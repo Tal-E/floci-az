@@ -40,6 +40,7 @@ import java.util.Optional;
  *       no nested-group support yet)</li>
  *   <li>{@code POST v1.0/groups/{id}/members/$ref} — add a member</li>
  *   <li>{@code DELETE v1.0/groups/{id}/members/{id}/$ref} — remove a member</li>
+ *   <li>{@code v1.0/applications...} — app registrations, client secrets and owners ({@link GraphApplications})</li>
  * </ul>
  */
 @ApplicationScoped
